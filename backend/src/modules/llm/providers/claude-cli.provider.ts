@@ -20,7 +20,7 @@ export class ClaudeCliProvider implements LlmProvider {
       .join('\n\n');
     const prompt = systemText ? `${systemText}\n\n---\n\n${conversation}` : conversation;
 
-    const result = await this.client.run(prompt, opts.model);
+    const result = await this.client.run(prompt, opts.model, opts.signal);
     if (!result.text) this.logger.warn('claude CLI returned empty stdout');
 
     return {

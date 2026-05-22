@@ -41,7 +41,11 @@ export class ClaudeCliClientService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async run(prompt: string, model?: string): Promise<ClaudeCliResult> {
+  async run(
+    prompt: string,
+    model?: string,
+    signal?: AbortSignal,
+  ): Promise<ClaudeCliResult> {
     const bin =
       this.config.get<string>(LLM_ENV.CLAUDE_CLI_BIN) ?? CLAUDE_CLI_DEFAULT_BIN;
     const args = [
@@ -53,6 +57,10 @@ export class ClaudeCliClientService {
     this.logger.log(
       `spawn ${bin} ${args.join(' ')} (prompt=${prompt.length} chars)`,
     );
+
+    if (signal?.aborted) {
+      throw new Error('claude CLI call aborted before spawn');
+    }
 
     return new Promise((resolve, reject) => {
       // Strip ANTHROPIC_API_KEY before spawning. The `claude` binary
@@ -72,11 +80,33 @@ export class ClaudeCliClientService {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let aborted = false;
+      let settled = false;
 
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill('SIGKILL');
       }, CLAUDE_CLI_TIMEOUT_MS);
+
+      // Listen for an outer cancellation (LlmService per-attempt
+      // timeout). SIGKILL the subprocess immediately so we stop
+      // paying for tokens nobody is waiting for. The close handler
+      // fires after the kill but `aborted` short-circuits it so the
+      // promise rejects with the abort error, not a misleading
+      // "exited with code 137".
+      const onAbort = () => {
+        if (settled) return;
+        aborted = true;
+        clearTimeout(timer);
+        child.kill('SIGKILL');
+      };
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+      const cleanup = () => {
+        settled = true;
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      };
 
       child.stdout.on('data', (d: Buffer) => {
         stdout += d.toString();
@@ -85,7 +115,8 @@ export class ClaudeCliClientService {
         stderr += d.toString();
       });
       child.on('error', (err) => {
-        clearTimeout(timer);
+        if (settled) return;
+        cleanup();
         reject(new Error(`claude CLI spawn failed (${bin}): ${err.message}`));
       });
       // If the child exits before consuming stdin (spawn race or
@@ -93,15 +124,25 @@ export class ClaudeCliClientService {
       // stdin Writable, which would crash the process. Surface it
       // through the same reject path as the spawn error.
       child.stdin.on('error', (err: Error & { code?: string }) => {
-        clearTimeout(timer);
+        if (settled) return;
         // EPIPE is the common "child closed before we finished
         // writing" race — squash it because child.on('close') will
         // reject with the more informative non-zero-exit message.
         if (err.code === 'EPIPE') return;
+        cleanup();
         reject(new Error(`claude CLI stdin error: ${err.message}`));
       });
       child.on('close', (code) => {
-        clearTimeout(timer);
+        if (settled) return;
+        cleanup();
+        if (aborted) {
+          reject(
+            new Error(
+              `claude CLI call aborted by outer timeout (prompt=${prompt.length} chars)`,
+            ),
+          );
+          return;
+        }
         if (timedOut) {
           reject(
             new Error(

@@ -25,12 +25,12 @@ describe('LlmService (facade)', () => {
     expect(factory.get).toHaveBeenCalled();
     expect(fakeProvider.call).toHaveBeenCalledWith(
       [{ role: ChatRole.User, content: 'ping' }],
-      { maxTokens: 10 },
+      expect.objectContaining({ maxTokens: 10, signal: expect.any(AbortSignal) }),
     );
     expect(result.text).toBe('pong');
   });
 
-  it('passes an empty options object when none is provided', async () => {
+  it('passes a signal-bearing options object even when caller provides none', async () => {
     const fakeProvider = { name: 'fake', call: jest.fn().mockResolvedValue(fakeResponse('')) };
     const service = new LlmService({ get: () => fakeProvider } as never);
 
@@ -38,7 +38,7 @@ describe('LlmService (facade)', () => {
 
     expect(fakeProvider.call).toHaveBeenCalledWith(
       [{ role: ChatRole.User, content: 'hi' }],
-      {},
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 });
@@ -220,6 +220,21 @@ describe('LlmService — retry + timeout', () => {
     expect(result.text).toBe('ok');
   });
 
+  // A provider that respects the abort signal. We can't just hand
+  // back a `new Promise(() => {})` anymore because LlmService now
+  // awaits the provider directly — without the provider observing
+  // the signal and rejecting, the await would never resolve.
+  function abortRespecting(): (_m: unknown, opts: { signal?: AbortSignal }) => Promise<never> {
+    return (_m, opts) =>
+      new Promise((_, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          (err as Error & { name: string }).name = 'AbortError';
+          reject(err);
+        });
+      });
+  }
+
   it('raises LlmTimeoutError when a single attempt exceeds the budget, and retries', async () => {
     const { service, provider } = makeService({
       maxAttempts: 2,
@@ -227,7 +242,7 @@ describe('LlmService — retry + timeout', () => {
       backoffBaseMs: 1,
     });
     provider.call
-      .mockImplementationOnce(() => new Promise(() => {})) // never resolves
+      .mockImplementationOnce(abortRespecting())
       .mockResolvedValueOnce(fakeResponse('after-timeout'));
 
     const result = await service.call([{ role: ChatRole.User, content: 'q' }]);
@@ -241,11 +256,40 @@ describe('LlmService — retry + timeout', () => {
       timeoutMs: 20,
       backoffBaseMs: 1,
     });
-    provider.call.mockImplementation(() => new Promise(() => {}));
+    provider.call.mockImplementation(abortRespecting());
 
     await expect(
       service.call([{ role: ChatRole.User, content: 'q' }]),
     ).rejects.toBeInstanceOf(LlmTimeoutError);
     expect(provider.call).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts the provider signal when the per-attempt timeout fires', async () => {
+    const { service, provider } = makeService({
+      maxAttempts: 1,
+      timeoutMs: 20,
+      backoffBaseMs: 1,
+    });
+    let capturedSignal: AbortSignal | undefined;
+    // Hold the call until the signal aborts, then reject with the
+    // SDK's standard AbortError shape so we exercise the "signal
+    // aborted → LlmTimeoutError" translation path in callWithTimeout.
+    provider.call.mockImplementation(
+      (_msgs, opts: { signal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          capturedSignal = opts.signal;
+          opts.signal?.addEventListener('abort', () => {
+            const err = new Error('aborted by signal');
+            (err as Error & { name: string }).name = 'AbortError';
+            reject(err);
+          });
+        }),
+    );
+
+    await expect(
+      service.call([{ role: ChatRole.User, content: 'q' }]),
+    ).rejects.toBeInstanceOf(LlmTimeoutError);
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(true);
   });
 });

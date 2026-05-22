@@ -37,7 +37,7 @@ describe('AnthropicClientService', () => {
     const params = { model: 'claude-opus-4-7', max_tokens: 16, messages: [] };
     const result = await service.createMessage(params as never);
 
-    expect(sdkCreate).toHaveBeenCalledWith(params);
+    expect(sdkCreate).toHaveBeenCalledWith(params, undefined);
     expect(result).toEqual({ id: 'msg_1' });
   });
 

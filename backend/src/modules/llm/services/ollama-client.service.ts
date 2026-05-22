@@ -9,11 +9,14 @@ export class OllamaClientService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async chat(params: {
-    model: string;
-    messages: OllamaChatMessage[];
-    options?: Record<string, unknown>;
-  }): Promise<OllamaChatResponse> {
+  async chat(
+    params: {
+      model: string;
+      messages: OllamaChatMessage[];
+      options?: Record<string, unknown>;
+    },
+    requestOptions?: { signal?: AbortSignal },
+  ): Promise<OllamaChatResponse> {
     const baseUrl = this.config.get<string>(LLM_ENV.OLLAMA_BASE_URL);
     if (!baseUrl) throw new Error(`${LLM_ENV.OLLAMA_BASE_URL} is not set`);
 
@@ -22,6 +25,16 @@ export class OllamaClientService {
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), OLLAMA_REQUEST_TIMEOUT_MS);
+    const outerSignal = requestOptions?.signal;
+    // Fold the outer (LlmService) signal into the local controller so
+    // both the internal Ollama-host timeout and the outer per-attempt
+    // timeout can release the in-flight fetch. AbortSignal.any would
+    // be cleaner but isn't available across all Node versions we run.
+    const onOuterAbort = () => ctrl.abort();
+    if (outerSignal) {
+      if (outerSignal.aborted) ctrl.abort();
+      else outerSignal.addEventListener('abort', onOuterAbort, { once: true });
+    }
 
     try {
       const res = await fetch(url, {
@@ -38,6 +51,11 @@ export class OllamaClientService {
       return (await res.json()) as OllamaChatResponse;
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') {
+        // Outer abort wins the message — it's the load-bearing cause
+        // and the inner host-timeout label would be misleading.
+        if (outerSignal?.aborted) {
+          throw new Error(`Ollama request aborted by outer timeout (${url})`);
+        }
         throw new Error(
           `Ollama request timed out after ${OLLAMA_REQUEST_TIMEOUT_MS}ms (${url})`,
         );
@@ -46,6 +64,7 @@ export class OllamaClientService {
       throw new Error(`Ollama request to ${url} failed: ${msg}`);
     } finally {
       clearTimeout(timer);
+      if (outerSignal) outerSignal.removeEventListener('abort', onOuterAbort);
     }
   }
 }

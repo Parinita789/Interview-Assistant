@@ -49,7 +49,10 @@ export class AnthropicProvider implements LlmProvider {
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     };
 
-    const result = await this.client.createMessage(params);
+    const result = await this.client.createMessage(
+      params,
+      opts.signal ? { signal: opts.signal } : undefined,
+    );
 
     const text = result.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

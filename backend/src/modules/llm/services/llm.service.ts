@@ -58,7 +58,7 @@ export class LlmService {
     let response: LlmResponse | null = null;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
-        response = await this.withTimeout(provider.call(messages, opts));
+        response = await this.callWithTimeout(provider, messages, opts);
         break;
       } catch (err) {
         lastErr = err;
@@ -104,18 +104,34 @@ export class LlmService {
     return this.factory.get().supportsToolUse;
   }
 
-  private async withTimeout<T>(p: Promise<T>): Promise<T> {
-    let timer: NodeJS.Timeout | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new LlmTimeoutError(`LLM call exceeded ${this.timeoutMs}ms`)),
-        this.timeoutMs,
-      );
-    });
+  // Per-attempt timeout that actually cancels the underlying work.
+  // The previous shape (Promise.race against a setTimeout reject)
+  // would resolve the race on time but leave the provider call
+  // running — for the claude_cli provider that meant a subprocess
+  // kept burning subscription tokens after the HTTP response had
+  // already errored back. Now we own an AbortController, hand its
+  // signal to the provider, and abort it when the timer fires.
+  // Providers wire the signal into their respective release path
+  // (subprocess SIGKILL, fetch abort, SDK signal). If the provider
+  // throws while the signal is aborted, we translate that into
+  // LlmTimeoutError so the retry classifier still does the right
+  // thing.
+  private async callWithTimeout(
+    provider: { call: (m: ChatMessage[], o: LlmCallOptions) => Promise<LlmResponse> },
+    messages: ChatMessage[],
+    opts: LlmCallOptions,
+  ): Promise<LlmResponse> {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     try {
-      return await Promise.race([p, timeoutPromise]);
+      return await provider.call(messages, { ...opts, signal: ac.signal });
+    } catch (err) {
+      if (ac.signal.aborted) {
+        throw new LlmTimeoutError(`LLM call exceeded ${this.timeoutMs}ms`);
+      }
+      throw err;
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 

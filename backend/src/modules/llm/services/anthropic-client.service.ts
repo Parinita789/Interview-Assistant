@@ -20,7 +20,10 @@ export class AnthropicClientService {
     return this.client;
   }
 
-  createMessage(params: Anthropic.MessageCreateParamsNonStreaming) {
-    return this.getClient().messages.create(params);
+  createMessage(
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    requestOptions?: { signal?: AbortSignal },
+  ) {
+    return this.getClient().messages.create(params, requestOptions);
   }
 }

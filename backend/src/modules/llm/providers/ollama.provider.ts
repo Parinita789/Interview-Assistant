@@ -39,11 +39,14 @@ export class OllamaProvider implements LlmProvider {
     if (opts.maxTokens !== undefined) ollamaOptions.num_predict = opts.maxTokens;
     if (opts.temperature !== undefined) ollamaOptions.temperature = opts.temperature;
 
-    const result = await this.client.chat({
-      model,
-      messages: ollamaMessages,
-      options: Object.keys(ollamaOptions).length > 0 ? ollamaOptions : undefined,
-    });
+    const result = await this.client.chat(
+      {
+        model,
+        messages: ollamaMessages,
+        options: Object.keys(ollamaOptions).length > 0 ? ollamaOptions : undefined,
+      },
+      opts.signal ? { signal: opts.signal } : undefined,
+    );
 
     if (!result.message?.content) {
       this.logger.warn(`Ollama returned empty content for model ${model}`);

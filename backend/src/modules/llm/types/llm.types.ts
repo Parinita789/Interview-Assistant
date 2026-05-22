@@ -34,6 +34,13 @@ export interface LlmCallOptions {
   // capping — by design, so tests don't need the cost-cap module wired.
   userId?: string;
   route?: string;
+  // Cancellation. LlmService injects an AbortSignal tied to its
+  // per-attempt timeout; providers must release any in-flight work
+  // (subprocess kill, fetch abort, SDK signal forward) when it fires.
+  // Without this, a timed-out call leaks the underlying request — for
+  // claude_cli that means a subscription-billed subprocess kept
+  // running after the HTTP response had already errored back.
+  signal?: AbortSignal;
 }
 
 export interface ToolUsePayload {
