@@ -1,6 +1,6 @@
 # backend — module relationships
 
-Cross-module import graph for `backend/`. Each box is a module, each arrow is "X imports from Y". Generated from `agents/codebase-map/backend.json` (no LLM calls). See `agents/graphify/build-mermaid.py`.
+Cross-module import graph for `backend/`. Each box is a module, each arrow is "X imports from Y". Generated from `agents/data/codebase-map/backend.json` (no LLM calls). See `agents/tools/graphify/build-mermaid.py`.
 
 **15 modules · 44 cross-module edges**
 **Hubs (>= 5 inbound):** `evaluations`, `sessions`, `snapshots`, `database`

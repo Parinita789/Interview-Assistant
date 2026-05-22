@@ -1,12 +1,10 @@
 # Codebase map
 
-_Generated 2026-05-11T17:50:50.086Z (model: claude-sonnet-4-6) by codebase-mapper._
+_Generated 2026-05-20T18:37:53.826Z (model: claude-sonnet-4-6) by codebase-mapper._
 
 Per-package maps:
 
-- [backend](./backend.md) — 18 modules, 128 files
-- [frontend](./frontend.md) — 22 modules, 37 files
-- [cli](./cli.md) — 10 modules, 10 files
+- [frontend](./frontend.md) — 26 modules, 45 files
 
 ## Reading the map
 
