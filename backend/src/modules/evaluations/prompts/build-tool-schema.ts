@@ -45,9 +45,9 @@ const SIGNAL_SUB_SCHEMA = {
     },
     evidence: {
       type: 'string',
-      maxLength: 500,
+      maxLength: 150,
       description:
-        'Verbatim quote from a captured artifact (plan.md, file content, event timeline, or AI turn). For cannot_evaluate, explain why the signal is not applicable.',
+        'Verbatim quote from a captured artifact (plan.md, file content, event timeline, or AI turn) — ≤150 chars, a short citation, not a summary. For cannot_evaluate, briefly explain why the signal is not applicable.',
     },
   },
 } as const;

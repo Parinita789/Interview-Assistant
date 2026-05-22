@@ -45,9 +45,9 @@ const SIGNAL_SUB_SCHEMA = {
     },
     evidence: {
       type: 'string',
-      maxLength: 500,
+      maxLength: 150,
       description:
-        'Verbatim quote from artifacts. For cannot_evaluate, explain why the signal is not applicable.',
+        'Verbatim quote from artifacts (≤150 chars — a short citation, not a summary). For cannot_evaluate, briefly explain why the signal is not applicable.',
     },
   },
 } as const;
