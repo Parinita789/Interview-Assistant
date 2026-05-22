@@ -1,47 +1,19 @@
 import { Rubric } from '../types/rubric.types';
 import { ToolDefinition } from '../../llm/types/llm.types';
-import { CANONICAL_TOPICS } from '../helpers/canonical-topics';
+import { GAP_TOPIC_SUB_SCHEMA } from './_shared-schema-atoms';
 
-export const SUBMIT_EVAL_TOOL_NAME = 'submit_evaluation';
+export const SUBMIT_PLAN_DETAILS_TOOL_NAME = 'submit_plan_details';
 
-const GAP_TOPIC_SUB_SCHEMA = {
+const SIGNAL_DETAIL_SUB_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['name', 'coverage', 'why_expected'],
-  properties: {
-    name: {
-      type: 'string',
-      enum: [...CANONICAL_TOPICS],
-      description: 'Topic id from the canonical system-design vocabulary.',
-    },
-    coverage: {
-      type: 'string',
-      enum: ['missed', 'lightly_touched'],
-    },
-    why_expected: {
-      type: 'string',
-      maxLength: 400,
-      description:
-        '1-2 sentences naming what about THIS question (stated NFRs, scale, domain, or the candidate plan/code itself) makes this topic expected.',
-    },
-  },
-} as const;
-
-const RESULT_ENUM = ['hit', 'partial', 'miss', 'cannot_evaluate'] as const;
-
-const SIGNAL_SUB_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['reasoning', 'result', 'evidence'],
+  required: ['reasoning', 'evidence'],
   properties: {
     reasoning: {
       type: 'string',
       maxLength: 400,
-      description: 'Brief reasoning written before committing to result.',
-    },
-    result: {
-      type: 'string',
-      enum: RESULT_ENUM,
+      description:
+        'Brief reasoning for the verdict the prior pass committed to for this signal. Useful for the audit trail; not used in scoring.',
     },
     evidence: {
       type: 'string',
@@ -52,9 +24,15 @@ const SIGNAL_SUB_SCHEMA = {
   },
 } as const;
 
-const SIGNAL_REF = { $ref: '#/$defs/signal' } as const;
+const SIGNAL_REF = { $ref: '#/$defs/signal_detail' } as const;
 
-export function buildPlanEvalTool(rubric: Rubric): ToolDefinition {
+// Call B of the two-call plan eval split. Receives the per-signal
+// verdicts from Call A injected into the user prompt as ground truth,
+// and is asked to fill in the supporting evidence + feedback +
+// top_actions + gap_topics. Output is roughly 10-30x larger than
+// Call A's, so this is the slower of the two calls — but the UI is
+// already showing score + signals while it runs.
+export function buildPlanDetailsTool(rubric: Rubric): ToolDefinition {
   const signalIds = rubric.signals.map((s) => s.id);
   const signalProperties: Record<string, unknown> = {};
   for (const id of signalIds) {
@@ -62,14 +40,15 @@ export function buildPlanEvalTool(rubric: Rubric): ToolDefinition {
   }
 
   return {
-    name: SUBMIT_EVAL_TOOL_NAME,
-    description: "Submit the structured evaluation of the candidate's plan.md.",
+    name: SUBMIT_PLAN_DETAILS_TOOL_NAME,
+    description:
+      "Submit reasoning + evidence per signal, plus narrative feedback, top actionable items, and gap topics. The per-signal verdicts (hit/partial/miss/cannot_evaluate) were committed by a prior pass and ARE NOT yours to revise — your job is to back them up with quotes and synthesize the holistic feedback.",
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       required: ['signals', 'feedback', 'top_actions', 'gap_topics'],
       $defs: {
-        signal: SIGNAL_SUB_SCHEMA,
+        signal_detail: SIGNAL_DETAIL_SUB_SCHEMA,
         gap_topic: GAP_TOPIC_SUB_SCHEMA,
       },
       properties: {

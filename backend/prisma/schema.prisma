@@ -240,6 +240,18 @@ model PhaseEvaluation {
   // fingerprint.
   inputFingerprint    String?  @map("input_fingerprint") @db.Char(64)
 
+  // Two-call eval split: a plan eval is inserted after Call A (results
+  // + score) with the detail fields (feedbackText, topActionableItems,
+  // gapTopics) seeded empty; a background Call B then patches those
+  // fields and stamps detailsCompletedAt. Null detailsCompletedAt +
+  // null detailsError means details are still in flight. Frontend
+  // polls until one of them is non-null. detailsAudit carries Call
+  // B's tokens/latency/prompt — separate from the existing audit row
+  // so we don't restructure that 1:1 contract.
+  detailsCompletedAt  DateTime? @map("details_completed_at")
+  detailsError        String?   @map("details_error")
+  detailsAudit        Json?     @map("details_audit")
+
   session  Session            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   audit         EvaluationAudit?
   mentor        MentorArtifact?
