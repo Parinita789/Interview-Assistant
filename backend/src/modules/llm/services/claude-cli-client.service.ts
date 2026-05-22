@@ -16,6 +16,9 @@ export interface ClaudeCliResult {
   cacheCreationTokens: number;
 }
 
+// The terminal `result` event in stream-json carries the same shape
+// as the old single-envelope `json` output. Other event types
+// (`system`, `assistant`, `user`) are observed for log/heartbeat only.
 interface ClaudeCliJsonEnvelope {
   type: string;
   is_error: boolean;
@@ -35,6 +38,13 @@ interface ClaudeCliJsonEnvelope {
   >;
 }
 
+interface ClaudeCliStreamEvent {
+  type?: string;
+  subtype?: string;
+  model?: string;
+  session_id?: string;
+}
+
 @Injectable()
 export class ClaudeCliClientService {
   private readonly logger = new Logger(ClaudeCliClientService.name);
@@ -48,10 +58,19 @@ export class ClaudeCliClientService {
   ): Promise<ClaudeCliResult> {
     const bin =
       this.config.get<string>(LLM_ENV.CLAUDE_CLI_BIN) ?? CLAUDE_CLI_DEFAULT_BIN;
+    // stream-json emits one NDJSON event per line — system init,
+    // assistant deltas, and a terminal `result` event with the full
+    // text + usage. `--verbose` is required by the CLI when
+    // -p is paired with stream-json; without it the CLI rejects the
+    // flag combo at startup. The win over plain json: we get
+    // observability into a call that previously sat silent for
+    // minutes, and the operator can see "stream alive, event 14"
+    // instead of guessing whether the subprocess hung.
     const args = [
       '-p',
       '--output-format',
-      'json',
+      'stream-json',
+      '--verbose',
       ...(model ? ['--model', model] : []),
     ];
     this.logger.log(
@@ -77,11 +96,14 @@ export class ClaudeCliClientService {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: childEnv,
       });
-      let stdout = '';
+      let stdoutBuffer = '';
       let stderr = '';
       let timedOut = false;
       let aborted = false;
       let settled = false;
+      let eventCount = 0;
+      let finalEvent: ClaudeCliJsonEnvelope | null = null;
+      const malformedLines: string[] = [];
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -108,8 +130,57 @@ export class ClaudeCliClientService {
         if (signal) signal.removeEventListener('abort', onAbort);
       };
 
+      const handleLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let event: ClaudeCliStreamEvent;
+        try {
+          event = JSON.parse(trimmed) as ClaudeCliStreamEvent;
+        } catch {
+          // A malformed line is non-fatal — the CLI sometimes
+          // interleaves non-JSON status lines and the result event
+          // may still arrive. Stash for diagnostics; only fatal if
+          // we close without ever seeing a result event.
+          if (malformedLines.length < 5) malformedLines.push(trimmed.slice(0, 200));
+          return;
+        }
+        eventCount += 1;
+        if (event.type === 'system' && event.subtype === 'init') {
+          this.logger.log(
+            `claude CLI stream: init (model=${event.model ?? '?'}, ` +
+              `session=${event.session_id ?? '?'})`,
+          );
+        } else if (event.type === 'assistant') {
+          this.logger.log(`claude CLI stream: assistant event #${eventCount}`);
+        } else if (event.type === 'user') {
+          this.logger.log(`claude CLI stream: user/tool event #${eventCount}`);
+        } else if (event.type === 'result') {
+          // The terminal event carries the same shape the old single
+          // json envelope used to — stash and let the close handler
+          // resolve from it.
+          finalEvent = event as unknown as ClaudeCliJsonEnvelope;
+          this.logger.log(
+            `claude CLI stream: result received (events=${eventCount}, ` +
+              `is_error=${finalEvent.is_error ?? false})`,
+          );
+        } else {
+          // rate_limit_event, future event types, etc. — log the
+          // type so operators can see what the CLI is up to without
+          // dumping content.
+          this.logger.log(
+            `claude CLI stream: ${event.type ?? 'unknown'} event #${eventCount}`,
+          );
+        }
+      };
+
       child.stdout.on('data', (d: Buffer) => {
-        stdout += d.toString();
+        stdoutBuffer += d.toString();
+        let newlineIdx: number;
+        while ((newlineIdx = stdoutBuffer.indexOf('\n')) !== -1) {
+          const line = stdoutBuffer.slice(0, newlineIdx);
+          stdoutBuffer = stdoutBuffer.slice(newlineIdx + 1);
+          handleLine(line);
+        }
       });
       child.stderr.on('data', (d: Buffer) => {
         stderr += d.toString();
@@ -160,32 +231,38 @@ export class ClaudeCliClientService {
           return;
         }
 
-        let envelope: ClaudeCliJsonEnvelope;
-        try {
-          envelope = JSON.parse(stdout) as ClaudeCliJsonEnvelope;
-        } catch (err) {
+        // Flush any trailing partial line that didn't end in \n.
+        if (stdoutBuffer.length > 0) {
+          handleLine(stdoutBuffer);
+          stdoutBuffer = '';
+        }
+
+        if (!finalEvent) {
           reject(
             new Error(
-              `claude CLI returned non-JSON stdout: ${(err as Error).message}. ` +
-                `First 500 chars: ${stdout.slice(0, 500)}`,
+              `claude CLI stream-json ended without a result event ` +
+                `(events=${eventCount}, malformed=${malformedLines.length}). ` +
+                (malformedLines.length > 0
+                  ? `First bad line: ${malformedLines[0]}`
+                  : '(no malformed lines)'),
             ),
           );
           return;
         }
 
-        if (envelope.is_error) {
+        if (finalEvent.is_error) {
           reject(
             new Error(
-              `claude CLI returned an error envelope: ${envelope.result || '(no message)'}`,
+              `claude CLI returned an error envelope: ${finalEvent.result || '(no message)'}`,
             ),
           );
           return;
         }
 
-        const usage = envelope.usage ?? {};
+        const usage = finalEvent.usage ?? {};
         resolve({
-          text: (envelope.result ?? '').trim(),
-          model: pickActualModel(envelope.modelUsage, model),
+          text: (finalEvent.result ?? '').trim(),
+          model: pickActualModel(finalEvent.modelUsage, model),
           tokensIn: usage.input_tokens ?? 0,
           tokensOut: usage.output_tokens ?? 0,
           cacheReadTokens: usage.cache_read_input_tokens ?? 0,
