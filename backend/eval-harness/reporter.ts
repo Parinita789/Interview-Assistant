@@ -28,6 +28,32 @@ export function printConsoleReport(report: SuiteReport): void {
 
   for (const r of report.results) {
     process.stdout.write(formatRow(r) + '\n');
+    if (r.planBreakdown) {
+      const a = r.planBreakdown.callA;
+      const b = r.planBreakdown.callB;
+      const downgraded = r.planBreakdown.downgradedSignalIds.length;
+      process.stdout.write(
+        `   plan split: A=${(a.latencyMs / 1000).toFixed(1)}s (${a.tokensIn}/${a.tokensOut} tok) ` +
+          `· B=${(b.latencyMs / 1000).toFixed(1)}s (${b.tokensIn}/${b.tokensOut} tok) ` +
+          `· downgraded=${downgraded}\n`,
+      );
+    }
+    if (r.monolithicDiff) {
+      const d = r.monolithicDiff;
+      const arrow = d.scoreDelta === 0 ? '=' : d.scoreDelta > 0 ? '↑' : '↓';
+      process.stdout.write(
+        `   vs monolithic: split=${d.splitScore.toFixed(2)} ${arrow} mono=${d.monolithicScore.toFixed(2)} ` +
+          `(Δ=${d.scoreDelta.toFixed(2)}) · ` +
+          `agree ${d.agreementCount}/${d.totalSignals} signals · ` +
+          `mono ${(d.monolithicLatencyMs / 1000).toFixed(1)}s ` +
+          `(${d.monolithicTokensIn}/${d.monolithicTokensOut} tok)\n`,
+      );
+      for (const dis of d.signalDisagreements) {
+        process.stdout.write(
+          `      Δ ${dis.signalId}: split=${dis.splitVerdict} | mono=${dis.monolithicVerdict}\n`,
+        );
+      }
+    }
     for (const m of r.mismatches) {
       const evidence = m.actualEvidence
         ? ` ("${truncate(m.actualEvidence, 60)}")`

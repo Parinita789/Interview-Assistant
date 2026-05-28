@@ -63,6 +63,35 @@ export interface SignalMismatch {
   actualEvidence: string;
 }
 
+// Per-call breakdown (plan two-call split only). Null on build fixtures
+// and on legacy single-call paths so reporter output stays clean when
+// the breakdown isn't applicable.
+export interface PlanCallBreakdown {
+  callA: { latencyMs: number; tokensIn: number; tokensOut: number };
+  callB: { latencyMs: number; tokensIn: number; tokensOut: number };
+  downgradedSignalIds: string[];
+}
+
+// Output of --compare-monolithic mode. Per signal id, records the
+// verdict from each path. Two paths agreeing is the happy case; any
+// disagreement means the split changed the model's mind for that
+// signal — useful signal during a refactor.
+export interface MonolithicDiff {
+  splitScore: number;
+  monolithicScore: number;
+  scoreDelta: number;
+  signalDisagreements: Array<{
+    signalId: string;
+    splitVerdict: 'hit' | 'partial' | 'miss' | 'cannot_evaluate';
+    monolithicVerdict: 'hit' | 'partial' | 'miss' | 'cannot_evaluate';
+  }>;
+  agreementCount: number;
+  totalSignals: number;
+  monolithicLatencyMs: number;
+  monolithicTokensIn: number;
+  monolithicTokensOut: number;
+}
+
 export interface FixtureResult {
   name: string;
   description: string;
@@ -77,6 +106,14 @@ export interface FixtureResult {
   warnOnly: boolean;
   elapsedMs: number;
   modelUsed: string;
+  // Plan-only diagnostics. Lets the reporter print "Call A: 8s / Call B:
+  // 42s / downgraded: 2" so the operator can see the split in action
+  // even when total time matches the old monolithic shape.
+  planBreakdown?: PlanCallBreakdown;
+  // Populated only when --compare-monolithic is set. Compares the new
+  // two-call split's output against a single-call rerun on the same
+  // input. Disagreements per signal + score delta are surfaced.
+  monolithicDiff?: MonolithicDiff;
 }
 
 export interface SuiteReport {

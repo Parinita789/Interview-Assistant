@@ -5,11 +5,11 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from '../src/app.module';
 import { PlanAgent } from '../src/modules/evaluations/agents/plan.agent';
 import { BuildAgent } from '../src/modules/evaluations/agents/build.agent';
-import { BasePhaseAgent } from '../src/modules/evaluations/agents/base-phase.agent';
 import { RubricLoaderService } from '../src/modules/evaluations/services/rubric-loader.service';
 import {
   BuildContext,
   PhaseEvalInput,
+  PhaseEvaluationResult,
 } from '../src/modules/evaluations/types/evaluation.types';
 import { gapSignalIds } from '../src/modules/evaluations/helpers/gap-signals';
 import { reconstructBuildTree } from '../src/modules/evaluations/helpers/reconstruct-build-tree';
@@ -23,7 +23,15 @@ import { Phase } from '../src/modules/phase-tagger/types/phase.types';
 import { loadFixtures, validateAgainstRubric } from './fixture-loader';
 import { compareResult } from './comparator';
 import { printConsoleReport, writeJsonReport } from './reporter';
-import { Fixture, FixturePhase, SuiteReport } from './types';
+import {
+  Fixture,
+  FixturePhase,
+  MonolithicDiff,
+  PlanCallBreakdown,
+  SuiteReport,
+} from './types';
+import { runPlanMonolithic } from './monolithic';
+import { LlmService } from '../src/modules/llm/services/llm.service';
 
 interface CliArgs {
   filter?: string;
@@ -31,6 +39,7 @@ interface CliArgs {
   withSignalMentor?: boolean;
   withMentor?: boolean;
   phase?: FixturePhase; // when set, only run fixtures matching this phase
+  compareMonolithic?: boolean; // run plan fixtures through monolithic too + diff
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,6 +49,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg.startsWith('--out=')) out.out = arg.slice('--out='.length);
     else if (arg === '--with-signal-mentor') out.withSignalMentor = true;
     else if (arg === '--with-mentor') out.withMentor = true;
+    else if (arg === '--compare-monolithic') out.compareMonolithic = true;
     else if (arg.startsWith('--phase=')) {
       const v = arg.slice('--phase='.length);
       if (v !== 'plan' && v !== 'build') {
@@ -77,9 +87,20 @@ it, all matching fixtures run.
   --with-mentor         Also exercise the deep-dive mentor agent. Prints
                         section count, word count, and cross-phase mention
                         per fixture as a cheap shape check.
+  --compare-monolithic  For plan fixtures, also run a recreated single-call
+                        monolithic shape against the same inputs and diff
+                        the verdicts + score. Catches regressions where the
+                        split changed what the model would have decided.
+                        Roughly doubles per-fixture cost and latency.
 
 Exit code: 0 if every (non-warnOnly) fixture passed, 1 otherwise.`);
 }
+
+// Harness omits userId so LlmService.call's cost-cap path skips
+// accounting (it gates on `userId && route`). The cap exists for
+// real user sessions; harness runs are dev/regression tooling and
+// shouldn't ever spend against a real user's daily budget — and
+// spoofing a fake UUID would violate the LlmSpend FK to users.
 
 function buildInput(fx: Fixture): PhaseEvalInput {
   const now = new Date();
@@ -176,6 +197,7 @@ async function main(): Promise<void> {
     const rubricLoader = app.get(RubricLoaderService);
     const signalMentorAgent = args.withSignalMentor ? app.get(SignalMentorAgent) : null;
     const mentorAgent = args.withMentor ? app.get(MentorAgent) : null;
+    const llmService = args.compareMonolithic ? app.get(LlmService) : null;
     const config = app.get(ConfigService);
 
     let fixtures = loadFixtures(fixturesDir, args.filter);
@@ -217,11 +239,35 @@ async function main(): Promise<void> {
     for (const fx of fixtures) {
       const input = buildInput(fx);
       const start = Date.now();
-      const agent: BasePhaseAgent = fx.phase === 'build' ? buildAgent : planAgent;
-      const out = await agent.evaluate(input);
+      let out: PhaseEvaluationResult;
+      let planBreakdown: PlanCallBreakdown | undefined;
+      if (fx.phase === 'build') {
+        out = await buildAgent.evaluate(input);
+      } else {
+        const composed = await runPlanTwoCall(planAgent, input);
+        out = composed.result;
+        planBreakdown = composed.breakdown;
+      }
       const elapsed = Date.now() - start;
       modelUsed = out.audit.modelUsed;
-      results.push(compareResult(fx, out, elapsed, out.audit.modelUsed));
+
+      let monolithicDiff: MonolithicDiff | undefined;
+      if (args.compareMonolithic && llmService && fx.phase === 'plan') {
+        try {
+          const mono = await runPlanMonolithic(llmService, rubricLoader, input);
+          monolithicDiff = diffSplitVsMonolithic(out, mono);
+        } catch (err) {
+          // Per-fixture monolithic failures (LLM timeout, parse error)
+          // are non-fatal: the split-only result is still useful.
+          // Log + move on instead of crashing the whole sweep.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`   [monolithic] ${fx.name}: comparison failed — ${msg}`);
+        }
+      }
+
+      const fr = compareResult(fx, out, elapsed, out.audit.modelUsed, planBreakdown);
+      if (monolithicDiff) fr.monolithicDiff = monolithicDiff;
+      results.push(fr);
 
       if (signalMentorAgent) {
         const seniority = fx.seniority ?? 'senior';
@@ -320,6 +366,85 @@ async function main(): Promise<void> {
   } finally {
     await app.close();
   }
+}
+
+// Compose the two PlanAgent calls into a single PhaseEvaluationResult
+// for the comparator. Call A produces verdicts + score; Call B fills in
+// evidence + feedback + top_actions + gap_topics and (via the evidence
+// validator) may downgrade a signal, in which case the final score is
+// Call B's recomputed value. The audit returned is Call B's — that's the
+// load-bearing one for the harness report — but tokensIn/tokensOut sum
+// across both calls so latency/cost comparisons against the old
+// monolithic shape stay apples-to-apples.
+async function runPlanTwoCall(
+  planAgent: PlanAgent,
+  input: PhaseEvalInput,
+): Promise<{ result: PhaseEvaluationResult; breakdown: PlanCallBreakdown }> {
+  const callA = await planAgent.evaluateResults(input);
+  const callB = await planAgent.evaluateDetails(input, callA.signalResults);
+  const result: PhaseEvaluationResult = {
+    phase: 'plan',
+    score: callB.score,
+    signalResults: callB.signalResults,
+    feedbackText: callB.feedbackText,
+    topActionableItems: callB.topActionableItems,
+    gapTopics: callB.gapTopics,
+    audit: {
+      ...callB.audit,
+      tokensIn: callA.audit.tokensIn + callB.audit.tokensIn,
+      tokensOut: callA.audit.tokensOut + callB.audit.tokensOut,
+      cacheReadTokens: callA.audit.cacheReadTokens + callB.audit.cacheReadTokens,
+      cacheCreationTokens:
+        callA.audit.cacheCreationTokens + callB.audit.cacheCreationTokens,
+      latencyMs: (callA.audit.latencyMs ?? 0) + (callB.audit.latencyMs ?? 0),
+    },
+  };
+  const breakdown: PlanCallBreakdown = {
+    callA: {
+      latencyMs: callA.audit.latencyMs ?? 0,
+      tokensIn: callA.audit.tokensIn,
+      tokensOut: callA.audit.tokensOut,
+    },
+    callB: {
+      latencyMs: callB.audit.latencyMs ?? 0,
+      tokensIn: callB.audit.tokensIn,
+      tokensOut: callB.audit.tokensOut,
+    },
+    downgradedSignalIds: callB.downgradedSignalIds,
+  };
+  return { result, breakdown };
+}
+
+function diffSplitVsMonolithic(
+  split: PhaseEvaluationResult,
+  mono: PhaseEvaluationResult,
+): MonolithicDiff {
+  const allIds = new Set<string>([
+    ...Object.keys(split.signalResults),
+    ...Object.keys(mono.signalResults),
+  ]);
+  const disagreements: MonolithicDiff['signalDisagreements'] = [];
+  let agreementCount = 0;
+  for (const id of allIds) {
+    const a = split.signalResults[id]?.result;
+    const b = mono.signalResults[id]?.result;
+    if (a && b && a === b) {
+      agreementCount += 1;
+    } else if (a && b) {
+      disagreements.push({ signalId: id, splitVerdict: a, monolithicVerdict: b });
+    }
+  }
+  return {
+    splitScore: split.score,
+    monolithicScore: mono.score,
+    scoreDelta: split.score - mono.score,
+    signalDisagreements: disagreements,
+    agreementCount,
+    totalSignals: allIds.size,
+    monolithicLatencyMs: mono.audit.latencyMs ?? 0,
+    monolithicTokensIn: mono.audit.tokensIn,
+    monolithicTokensOut: mono.audit.tokensOut,
+  };
 }
 
 main().catch((err) => {

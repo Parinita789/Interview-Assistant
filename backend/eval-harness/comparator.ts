@@ -1,5 +1,11 @@
 import { PhaseEvaluationResult, SignalResult } from '../src/modules/evaluations/types/evaluation.types';
-import { Fixture, FixtureResult, SignalMismatch, SignalMode } from './types';
+import {
+  Fixture,
+  FixtureResult,
+  PlanCallBreakdown,
+  SignalMismatch,
+  SignalMode,
+} from './types';
 
 function modeAccepts(mode: SignalMode, actual: SignalResult['result']): boolean {
   switch (mode) {
@@ -21,6 +27,7 @@ export function compareResult(
   out: PhaseEvaluationResult,
   elapsedMs: number,
   modelUsed: string,
+  planBreakdown?: PlanCallBreakdown,
 ): FixtureResult {
   const scoreOk =
     out.score >= fx.expectedScore.min && out.score <= fx.expectedScore.max;
@@ -72,5 +79,6 @@ export function compareResult(
     warnOnly: fx.warnOnly === true,
     elapsedMs,
     modelUsed,
+    ...(planBreakdown ? { planBreakdown } : {}),
   };
 }
