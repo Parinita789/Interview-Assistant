@@ -28,8 +28,8 @@ export interface ParsedEvalOutput {
   droppedTopicNames?: string[];
 }
 
-const VALID_RESULTS = new Set(['hit', 'miss', 'partial', 'cannot_evaluate']);
-const VALID_GAP_COVERAGES = new Set<GapTopic['coverage']>([
+export const VALID_RESULTS = new Set(['hit', 'miss', 'partial', 'cannot_evaluate']);
+export const VALID_GAP_COVERAGES = new Set<GapTopic['coverage']>([
   'missed',
   'lightly_touched',
 ]);
@@ -155,7 +155,7 @@ function validateSignalEntry(
   };
 }
 
-function extractGapTopics(
+export function extractGapTopics(
   obj: Record<string, unknown>,
   rawText: string,
 ): { topics: GapTopic[]; dropped: string[] } {

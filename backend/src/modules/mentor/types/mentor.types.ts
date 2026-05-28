@@ -6,7 +6,10 @@ export interface MentorArtifact {
 }
 
 export interface MentorInput {
-  userId: string;
+  // Optional so eval-harness (no user session behind the call) can
+  // invoke MentorAgent without spoofing a UUID. LlmService skips
+  // cost-cap accounting when userId is absent.
+  userId?: string;
   question: string;
   planMd: string | null;
   signalResults: Record<

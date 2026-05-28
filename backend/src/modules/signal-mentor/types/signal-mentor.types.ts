@@ -12,7 +12,10 @@ export interface GapSignalContext {
 }
 
 export interface SignalMentorInput {
-  userId: string;
+  // Optional so eval-harness (no user session behind the call) can
+  // invoke SignalMentorAgent without spoofing a UUID. LlmService
+  // skips cost-cap accounting when userId is absent.
+  userId?: string;
   question: string;
   planMd: string | null;
   gaps: GapSignalContext[];

@@ -1,5 +1,10 @@
 import { OrchestratorService } from './orchestrator.service';
-import { PhaseEvaluationResult } from '../types/evaluation.types';
+import {
+  PhaseEvaluationResult,
+  PlanDetailsPayload,
+  PlanResultsPayload,
+  SignalResult,
+} from '../types/evaluation.types';
 
 const SID = '00000000-0000-0000-0000-000000000001';
 
@@ -20,9 +25,9 @@ function makeSession(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function makeResult(phase: 'plan' | 'build'): PhaseEvaluationResult {
+function makeBuildResult(): PhaseEvaluationResult {
   return {
-    phase,
+    phase: 'build',
     score: 4,
     signalResults: {},
     feedbackText: 'fb',
@@ -41,11 +46,60 @@ function makeResult(phase: 'plan' | 'build'): PhaseEvaluationResult {
   };
 }
 
+function makePlanResults(): PlanResultsPayload {
+  const signalResults: Record<string, SignalResult> = {
+    sig_a: { result: 'hit', evidence: '' },
+    sig_b: { result: 'miss', evidence: '' },
+  };
+  return {
+    score: 4,
+    signalResults,
+    audit: {
+      prompt: 'p-A',
+      rawResponse: '{"signals":{...}}',
+      modelUsed: 'm',
+      tokensIn: 1,
+      tokensOut: 1,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      latencyMs: 1,
+      llmScore: 4,
+    },
+  };
+}
+
+function makePlanDetails(downgraded: string[] = []): PlanDetailsPayload {
+  return {
+    signalResults: {
+      sig_a: { result: 'hit', evidence: 'quote', reasoning: 'because' },
+      sig_b: { result: 'miss', evidence: 'n/a', reasoning: 'absent' },
+    },
+    score: downgraded.length > 0 ? 3 : 4,
+    downgradedSignalIds: downgraded,
+    feedbackText: 'detailed feedback',
+    topActionableItems: ['action 1'],
+    gapTopics: [],
+    audit: {
+      prompt: 'p-B',
+      rawResponse: '{"signals":{...}}',
+      modelUsed: 'm',
+      tokensIn: 2,
+      tokensOut: 1500,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      latencyMs: 30000,
+      llmScore: downgraded.length > 0 ? 3 : 4,
+    },
+  };
+}
+
 function makeOrchestrator(deps: {
   session?: ReturnType<typeof makeSession>;
   events?: Array<unknown>;
   aiTurns?: Array<unknown>;
-  planResult?: PhaseEvaluationResult;
+  planResults?: PlanResultsPayload;
+  planDetails?: PlanDetailsPayload;
+  planDetailsError?: Error;
   buildResult?: PhaseEvaluationResult;
 }) {
   const sessionsService = {
@@ -56,8 +110,15 @@ function makeOrchestrator(deps: {
     latest: jest.fn().mockResolvedValue({ artifacts: { planMd: '# Plan' } }),
   };
   const aiInteractionsRepo = { findBySession: jest.fn().mockResolvedValue([]) };
-  const planAgent = { evaluate: jest.fn().mockResolvedValue(deps.planResult ?? makeResult('plan')) };
-  const buildAgent = { evaluate: jest.fn().mockResolvedValue(deps.buildResult ?? makeResult('build')) };
+  const planAgent = {
+    evaluateResults: jest.fn().mockResolvedValue(deps.planResults ?? makePlanResults()),
+    evaluateDetails: deps.planDetailsError
+      ? jest.fn().mockRejectedValue(deps.planDetailsError)
+      : jest.fn().mockResolvedValue(deps.planDetails ?? makePlanDetails()),
+  };
+  const buildAgent = {
+    evaluate: jest.fn().mockResolvedValue(deps.buildResult ?? makeBuildResult()),
+  };
   const evalsRepo = {
     createPhaseEvaluation: jest
       .fn()
@@ -68,13 +129,25 @@ function makeOrchestrator(deps: {
       })),
     createEvaluationAudit: jest.fn().mockResolvedValue(undefined),
     findByFingerprint: jest.fn().mockResolvedValue(null),
+    patchDetails: jest.fn().mockResolvedValue(undefined),
+    markDetailsError: jest.fn().mockResolvedValue(undefined),
   };
   const config = { get: jest.fn() };
   const eventEmitter = { emit: jest.fn() };
-  const buildEventsRepo = { findAllForSession: jest.fn().mockResolvedValue(deps.events ?? []) };
-  const buildAiRepo = { findAllForSession: jest.fn().mockResolvedValue(deps.aiTurns ?? []) };
+  // tasks.track returns the same promise the caller passed AND swallows
+  // its rejection — so the test can `await orchestrator.run()` and the
+  // promise resolves immediately. To drive the background Call B
+  // through to completion in tests, we await `await tasks.lastTracked`
+  // after the run.
+  let lastTracked: Promise<unknown> = Promise.resolve();
   const tasks = {
-    track: jest.fn((p: Promise<unknown>) => p.catch(() => undefined)),
+    track: jest.fn((p: Promise<unknown>, _label?: string) => {
+      lastTracked = p.catch(() => undefined);
+      return lastTracked;
+    }),
+    get lastTracked() {
+      return lastTracked;
+    },
   };
   const buildContextSvc = {
     load: jest.fn().mockImplementation(async (_sid, session) => {
@@ -130,8 +203,6 @@ function makeOrchestrator(deps: {
     planAgent,
     buildAgent,
     eventEmitter,
-    buildEventsRepo,
-    buildAiRepo,
     buildContextSvc,
     tasks,
     evalsRepo,
@@ -139,10 +210,10 @@ function makeOrchestrator(deps: {
 }
 
 describe('OrchestratorService.run dispatch', () => {
-  it('routes phase="plan" to PlanAgent and skips BuildAgent', async () => {
+  it('routes phase="plan" to PlanAgent.evaluateResults (Call A) and skips BuildAgent', async () => {
     const t = makeOrchestrator({});
     await t.svc.run(SID, ['plan']);
-    expect(t.planAgent.evaluate).toHaveBeenCalledTimes(1);
+    expect(t.planAgent.evaluateResults).toHaveBeenCalledTimes(1);
     expect(t.buildAgent.evaluate).not.toHaveBeenCalled();
   });
 
@@ -150,7 +221,7 @@ describe('OrchestratorService.run dispatch', () => {
     const t = makeOrchestrator({});
     await t.svc.run(SID, ['build']);
     expect(t.buildAgent.evaluate).toHaveBeenCalledTimes(1);
-    expect(t.planAgent.evaluate).not.toHaveBeenCalled();
+    expect(t.planAgent.evaluateResults).not.toHaveBeenCalled();
   });
 
   it('throws on unimplemented phases', async () => {
@@ -158,7 +229,7 @@ describe('OrchestratorService.run dispatch', () => {
     await expect(t.svc.run(SID, ['validate'])).rejects.toThrow(/validate agent not implemented/);
   });
 
-  it('emits EvaluationCompletedEvent for each persisted phase eval', async () => {
+  it('emits EvaluationCompletedEvent for the build path', async () => {
     const t = makeOrchestrator({});
     await t.svc.run(SID, ['build']);
     expect(t.eventEmitter.emit).toHaveBeenCalledTimes(1);
@@ -167,12 +238,112 @@ describe('OrchestratorService.run dispatch', () => {
     expect(payload).toEqual(
       expect.objectContaining({ evaluationId: 'eid-build', sessionId: SID, phase: 'build' }),
     );
+  });
 
+  it('emits EvaluationCompletedEvent for the plan path after Call A persists', async () => {
+    const t = makeOrchestrator({});
     await t.svc.run(SID, ['plan']);
-    expect(t.eventEmitter.emit).toHaveBeenCalledTimes(2);
-    expect(t.eventEmitter.emit.mock.calls[1][1]).toEqual(
+    expect(t.eventEmitter.emit).toHaveBeenCalledWith(
+      'evaluation.completed',
       expect.objectContaining({ evaluationId: 'eid-plan', sessionId: SID, phase: 'plan' }),
     );
+  });
+});
+
+describe('OrchestratorService two-call plan path', () => {
+  it('persists Call A row immediately with score + empty detail fields, then schedules Call B', async () => {
+    const t = makeOrchestrator({});
+    const [persisted] = await t.svc.run(SID, ['plan']);
+
+    expect(persisted.id).toBe('eid-plan');
+    expect(t.planAgent.evaluateResults).toHaveBeenCalledTimes(1);
+    expect(t.evalsRepo.createPhaseEvaluation).toHaveBeenCalledTimes(1);
+
+    const [, , seed] = t.evalsRepo.createPhaseEvaluation.mock.calls[0];
+    expect(seed.score).toBe(4);
+    expect(seed.signalResults.sig_a.result).toBe('hit');
+    expect(seed.feedbackText).toBe('');
+    expect(seed.topActionableItems).toEqual([]);
+    expect(seed.gapTopics).toEqual([]);
+
+    expect(t.tasks.track).toHaveBeenCalledTimes(1);
+    expect(t.tasks.track.mock.calls[0][1]).toMatch(/plan\.details/);
+  });
+
+  it('Call B patches the row with full details + score + audit', async () => {
+    const t = makeOrchestrator({});
+    await t.svc.run(SID, ['plan']);
+    await t.tasks.lastTracked;
+
+    expect(t.planAgent.evaluateDetails).toHaveBeenCalledTimes(1);
+    expect(t.evalsRepo.patchDetails).toHaveBeenCalledTimes(1);
+
+    const [id, patch] = t.evalsRepo.patchDetails.mock.calls[0];
+    expect(id).toBe('eid-plan');
+    expect(patch.feedbackText).toBe('detailed feedback');
+    expect(patch.topActionableItems).toEqual(['action 1']);
+    expect(patch.score).toBe(4);
+  });
+
+  it('emits PlanEvalDetailsCompletedEvent (succeeded=true) after Call B persists', async () => {
+    const t = makeOrchestrator({});
+    await t.svc.run(SID, ['plan']);
+    await t.tasks.lastTracked;
+
+    const detailsEvents = t.eventEmitter.emit.mock.calls.filter(
+      ([name]) => name === 'plan-eval.details-completed',
+    );
+    expect(detailsEvents).toHaveLength(1);
+    expect(detailsEvents[0][1]).toEqual(
+      expect.objectContaining({
+        evaluationId: 'eid-plan',
+        sessionId: SID,
+        succeeded: true,
+      }),
+    );
+  });
+
+  it('Call B failure: marks detailsError on the row and emits succeeded=false', async () => {
+    const t = makeOrchestrator({
+      planDetailsError: new Error('LLM timeout exceeded 90s'),
+    });
+    await t.svc.run(SID, ['plan']);
+    await t.tasks.lastTracked;
+
+    expect(t.evalsRepo.markDetailsError).toHaveBeenCalledTimes(1);
+    const [id, message] = t.evalsRepo.markDetailsError.mock.calls[0];
+    expect(id).toBe('eid-plan');
+    expect(message).toMatch(/LLM timeout/);
+
+    expect(t.evalsRepo.patchDetails).not.toHaveBeenCalled();
+
+    const detailsEvents = t.eventEmitter.emit.mock.calls.filter(
+      ([name]) => name === 'plan-eval.details-completed',
+    );
+    expect(detailsEvents).toHaveLength(1);
+    expect(detailsEvents[0][1].succeeded).toBe(false);
+  });
+
+  it('passes Call A signal results as priorSignalResults to Call B', async () => {
+    const t = makeOrchestrator({});
+    await t.svc.run(SID, ['plan']);
+    await t.tasks.lastTracked;
+
+    const [, priorResults] = t.planAgent.evaluateDetails.mock.calls[0];
+    expect(priorResults.sig_a.result).toBe('hit');
+    expect(priorResults.sig_b.result).toBe('miss');
+  });
+
+  it('caps detailsError message length so a long LLM error does not bloat the row', async () => {
+    const t = makeOrchestrator({
+      planDetailsError: new Error('X'.repeat(2000)),
+    });
+    await t.svc.run(SID, ['plan']);
+    await t.tasks.lastTracked;
+
+    const [, message] = t.evalsRepo.markDetailsError.mock.calls[0];
+    expect(message.length).toBeLessThanOrEqual(520);
+    expect(message).toMatch(/truncated/);
   });
 });
 
@@ -247,18 +418,17 @@ describe('OrchestratorService.run content-based caching', () => {
     const result = await t.svc.run(SID, ['plan']);
 
     expect(result).toEqual([cachedRow]);
-    expect(t.planAgent.evaluate).not.toHaveBeenCalled();
+    expect(t.planAgent.evaluateResults).not.toHaveBeenCalled();
     expect(t.evalsRepo.createPhaseEvaluation).not.toHaveBeenCalled();
     expect(t.eventEmitter.emit).not.toHaveBeenCalled();
+    expect(t.tasks.track).not.toHaveBeenCalled();
   });
 
-  it('runs the agent normally on cache miss (findByFingerprint returns null)', async () => {
+  it('runs Call A normally on cache miss (findByFingerprint returns null)', async () => {
     const t = makeOrchestrator({});
-    // default mock already returns null — this test documents the
-    // expected behavior on miss
     await t.svc.run(SID, ['plan']);
     expect(t.evalsRepo.findByFingerprint).toHaveBeenCalledTimes(1);
-    expect(t.planAgent.evaluate).toHaveBeenCalledTimes(1);
+    expect(t.planAgent.evaluateResults).toHaveBeenCalledTimes(1);
     expect(t.evalsRepo.createPhaseEvaluation).toHaveBeenCalledTimes(1);
   });
 
@@ -271,11 +441,8 @@ describe('OrchestratorService.run content-based caching', () => {
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('returns the winner row on P2002 concurrent-race conflict and does not emit event', async () => {
+  it('returns the winner row on P2002 concurrent-race conflict at Call A insert', async () => {
     const t = makeOrchestrator({});
-    // First findByFingerprint (cache check) returns null → agent runs.
-    // createPhaseEvaluation throws P2002 (another orchestrator beat us).
-    // Second findByFingerprint (post-conflict) returns the winner.
     const winnerRow = {
       id: 'winner-eid',
       phase: 'plan',
@@ -293,10 +460,7 @@ describe('OrchestratorService.run content-based caching', () => {
     const result = await t.svc.run(SID, ['plan']);
 
     expect(result).toEqual([winnerRow]);
-    // Audit was not created on the conflict path (winner already has its audit).
     expect(t.evalsRepo.createEvaluationAudit).not.toHaveBeenCalled();
-    // Event was not emitted on the conflict path (winner already emitted).
-    expect(t.eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   it('propagates non-P2002 DB errors (does not swallow real failures)', async () => {
@@ -309,12 +473,9 @@ describe('OrchestratorService.run content-based caching', () => {
 
   it('rethrows the original P2002 if no winner row exists after the conflict (unexpected state)', async () => {
     const t = makeOrchestrator({});
-    // Cache miss → agent runs → P2002 thrown → re-query returns null.
-    // This is "shouldn't happen" territory; we surface the original error
-    // rather than silently invent a row.
     t.evalsRepo.findByFingerprint
-      .mockResolvedValueOnce(null)  // initial cache check
-      .mockResolvedValueOnce(null); // post-conflict re-query
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
     t.evalsRepo.createPhaseEvaluation.mockRejectedValueOnce({
       code: 'P2002',
       message: 'Unique constraint failed',

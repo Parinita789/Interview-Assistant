@@ -8,7 +8,11 @@ export interface PhaseEvalInput {
     startedAt: Date;
     endedAt: Date | null;
   };
-  userId: string;
+  // Real user behind the eval; threaded into LlmService.call's
+  // cost-cap routing. Optional because dev tooling (eval-harness)
+  // exists outside the user-session model — LlmService skips cap
+  // accounting when userId is absent.
+  userId?: string;
   planMd: string | null;
   snapshots: Array<{
     takenAt: Date;
@@ -72,6 +76,41 @@ export interface PhaseEvaluationResult {
   phase: Phase;
   score: number;
   signalResults: Record<string, SignalResult>;
+  feedbackText: string;
+  topActionableItems: string[];
+  gapTopics: GapTopic[];
+  audit: EvaluationAuditPayload;
+}
+
+// Two-call plan eval. PlanAgent.evaluateResults runs Call A (fast,
+// score-only) and emits PlanResultsPayload; the orchestrator persists
+// a row with score + signalResults from this payload, leaving the
+// detail fields empty. PlanAgent.evaluateDetails runs Call B (slow,
+// in background) with Call A's verdicts injected as ground truth and
+// emits PlanDetailsPayload; the orchestrator merges evidence into
+// signalResults, sets feedback/top_actions/gap_topics, and stamps
+// detailsCompletedAt. The two payloads are intentionally NOT a
+// single PhaseEvaluationResult — the splits' atomicity differs.
+export interface PlanResultsPayload {
+  // Score computed deterministically from the verdicts the LLM
+  // committed — the agent does this so the orchestrator stays a pure
+  // I/O layer.
+  score: number;
+  signalResults: Record<string, SignalResult>;
+  audit: EvaluationAuditPayload;
+}
+
+export interface PlanDetailsPayload {
+  // Merged signal results: prior verdicts (from Call A) carry their
+  // result, plus reasoning + evidence from Call B; possibly downgraded
+  // by validateEvidence when the LLM-quoted evidence isn't grounded.
+  signalResults: Record<string, SignalResult>;
+  // Re-computed score after evidence validation. May differ by ±1
+  // from Call A's score when the validator downgraded any signals.
+  score: number;
+  // Signal ids that the evidence validator downgraded (hit → partial
+  // or partial → miss). Empty when nothing was downgraded.
+  downgradedSignalIds: string[];
   feedbackText: string;
   topActionableItems: string[];
   gapTopics: GapTopic[];

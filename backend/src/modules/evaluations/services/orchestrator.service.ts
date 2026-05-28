@@ -8,14 +8,19 @@ import { SnapshotsService } from '../../snapshots/services/snapshots.service';
 import { AIInteractionsRepository } from '../../hints/repositories/ai-interactions.repository';
 import { PlanAgent } from '../agents/plan.agent';
 import { BuildAgent } from '../agents/build.agent';
-import { BasePhaseAgent } from '../agents/base-phase.agent';
-import { PhaseEvalInput } from '../types/evaluation.types';
+import {
+  PhaseEvalInput,
+  PhaseEvaluationResult,
+  PlanResultsPayload,
+  SignalResult,
+} from '../types/evaluation.types';
 import { EvaluationsRepository } from '../repositories/evaluations.repository';
 import { BuildContextService } from './build-context.service';
 import { BackgroundTaskTracker } from '../../../common/background-task-tracker.service';
 import {
   BuildEvalRequestedEvent,
   EvaluationCompletedEvent,
+  PlanEvalDetailsCompletedEvent,
 } from '../../../common/events/evaluation-events';
 import { computeFingerprint } from '../helpers/compute-fingerprint';
 import { AGENTS_CONFIG } from '../../../config/llm-tunables.config';
@@ -99,23 +104,17 @@ export class OrchestratorService {
 
     const out: PhaseEvaluation[] = [];
     for (const phase of phases) {
-      const agent = this.agentFor(phase);
-      if (!agent) {
-        throw new Error(`${phase} agent not implemented`);
-      }
       const phaseInput =
         phase === 'build'
           ? { ...input, buildContext: await this.buildContextSvc.load(sessionId, session) }
           : input;
 
-      // Content-based cache check: if a prior eval already exists for
-      // this session+phase with identical material inputs (plan.md,
-      // model, build artifacts for build phase), return it instead of
-      // paying for a fresh LLM run. Mentor + signal-mentor are NOT
-      // re-fired — they already ran (or are running) for the cached
-      // row; firing again would just duplicate that work. Users who
-      // want to regenerate downstream artifacts use the dedicated
-      // POST /mentor/:id endpoint.
+      // Content-based cache check. Same shape across phases — same
+      // inputs (plan.md + model + build artifacts) means same row.
+      // Mentor + signal-mentor are NOT re-fired on a cache hit; the
+      // first run already dispatched them and a second dispatch would
+      // duplicate work. Users who want fresh mentor output use the
+      // dedicated POST /mentor/:id endpoint.
       const fingerprintModel = this.fingerprintModelFor(phase, options?.model);
       const fingerprint = computeFingerprint(phase, {
         planMd: phaseInput.planMd,
@@ -132,48 +131,169 @@ export class OrchestratorService {
         continue;
       }
 
-      this.logger.log(`Running ${phase} agent for session ${sessionId}`);
-      const result = await agent.evaluate(phaseInput);
-
-      let persisted: PhaseEvaluation;
-      try {
-        persisted = await this.evalsRepo.createPhaseEvaluation(
-          sessionId,
-          phase,
-          result,
-          fingerprint,
-        );
-        await this.evalsRepo.createEvaluationAudit(persisted.id, result.audit);
-        this.eventEmitter.emit(
-          EvaluationCompletedEvent.eventName,
-          new EvaluationCompletedEvent(persisted.id, sessionId, phase, options?.model),
-        );
-      } catch (err) {
-        // Lost a concurrent race against another orchestrator run with
-        // identical inputs — the unique partial index on
-        // (session_id, phase, input_fingerprint) rejected this INSERT
-        // because the other side already wrote the row. The LLM call
-        // we just made is wasted (a follow-up idempotency-key layer
-        // will short-circuit before the LLM call), but DB integrity is
-        // preserved. Return the winner's row to the caller so the
-        // user sees a consistent result.
-        if (!isUniqueConstraintViolation(err)) throw err;
-        const winner = await this.evalsRepo.findByFingerprint(sessionId, phase, fingerprint);
-        if (!winner) {
-          // P2002 thrown but no row found by the same fingerprint —
-          // unexpected; surface the original error.
-          throw err;
-        }
-        this.logger.warn(
-          `Concurrent race on ${phase} eval for session ${sessionId} — ` +
-            `duplicate LLM call paid, returning winner's row ${winner.id}.`,
-        );
-        persisted = winner;
+      if (phase === 'plan') {
+        out.push(await this.runPlanPhase(sessionId, phaseInput, fingerprint, options?.model));
+      } else if (phase === 'build') {
+        out.push(await this.runBuildPhase(sessionId, phaseInput, fingerprint, options?.model));
+      } else {
+        throw new Error(`${phase} agent not implemented`);
       }
-
-      out.push(persisted);
     }
     return out;
+  }
+
+  // Plan: Call A persists a row with score-only + empty detail fields.
+  // Call B fires in the background via BackgroundTaskTracker and
+  // patches the row when it completes. The HTTP caller gets the
+  // row from Call A at ~5-15s and the frontend polls for Call B.
+  private async runPlanPhase(
+    sessionId: string,
+    input: PhaseEvalInput,
+    fingerprint: string,
+    overrideModel: string | undefined,
+  ): Promise<PhaseEvaluation> {
+    this.logger.log(`Running plan Call A for session ${sessionId}`);
+    const results = await this.planAgent.evaluateResults(input);
+
+    const persisted = await this.persistPlanCallA(sessionId, results, fingerprint);
+
+    // Signal-mentor fires now — it only needs per-signal verdicts.
+    this.eventEmitter.emit(
+      EvaluationCompletedEvent.eventName,
+      new EvaluationCompletedEvent(persisted.id, sessionId, 'plan', overrideModel),
+    );
+
+    // Call B in the background. Failures are caught inside
+    // evaluateDetailsAndPersist and stored on the row as detailsError
+    // so the frontend can render a banner instead of polling forever.
+    this.tasks.track(
+      this.evaluateDetailsAndPersist(persisted.id, sessionId, input, results.signalResults),
+      `plan.details(${sessionId})`,
+    );
+
+    return persisted;
+  }
+
+  private async persistPlanCallA(
+    sessionId: string,
+    results: PlanResultsPayload,
+    fingerprint: string,
+  ): Promise<PhaseEvaluation> {
+    // Seed the row with score + verdicts; detail fields are empty
+    // string / empty array; details_completed_at = null (Prisma default).
+    const seed: PhaseEvaluationResult = {
+      phase: 'plan',
+      score: results.score,
+      signalResults: results.signalResults,
+      feedbackText: '',
+      topActionableItems: [],
+      gapTopics: [],
+      audit: results.audit,
+    };
+    try {
+      const persisted = await this.evalsRepo.createPhaseEvaluation(
+        sessionId,
+        'plan',
+        seed,
+        fingerprint,
+      );
+      await this.evalsRepo.createEvaluationAudit(persisted.id, results.audit);
+      return persisted;
+    } catch (err) {
+      if (!isUniqueConstraintViolation(err)) throw err;
+      const winner = await this.evalsRepo.findByFingerprint(sessionId, 'plan', fingerprint);
+      if (!winner) throw err;
+      this.logger.warn(
+        `Concurrent race on plan eval for session ${sessionId} — ` +
+          `duplicate Call A paid, returning winner's row ${winner.id}.`,
+      );
+      return winner;
+    }
+  }
+
+  private async evaluateDetailsAndPersist(
+    evaluationId: string,
+    sessionId: string,
+    input: PhaseEvalInput,
+    priorSignalResults: Record<string, SignalResult>,
+  ): Promise<void> {
+    try {
+      const details = await this.planAgent.evaluateDetails(input, priorSignalResults);
+      await this.evalsRepo.patchDetails(evaluationId, {
+        signalResults: details.signalResults,
+        score: details.score,
+        feedbackText: details.feedbackText,
+        topActionableItems: details.topActionableItems,
+        gapTopics: details.gapTopics,
+        detailsAudit: details.audit,
+      });
+      this.eventEmitter.emit(
+        PlanEvalDetailsCompletedEvent.eventName,
+        new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, true),
+      );
+      this.logger.log(
+        `Plan Call B persisted for eval ${evaluationId} ` +
+          `(${details.downgradedSignalIds.length} signal(s) downgraded)`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Plan Call B failed for eval ${evaluationId}: ${message}. ` +
+          `Marking detailsError on the row.`,
+      );
+      try {
+        await this.evalsRepo.markDetailsError(evaluationId, truncateError(message));
+      } catch (writeErr) {
+        // If we can't even write the error column, log and move on —
+        // the row is still queryable; the frontend will poll until it
+        // gives up by its own UI timeout.
+        this.logger.error(
+          `Plan Call B: also failed to write detailsError for eval ${evaluationId}: ` +
+            (writeErr instanceof Error ? writeErr.message : String(writeErr)),
+        );
+      }
+      this.eventEmitter.emit(
+        PlanEvalDetailsCompletedEvent.eventName,
+        new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, false),
+      );
+    }
+  }
+
+  // Build keeps the single-call shape — same behavior as before. The
+  // two-call refactor is plan-only for this PR; build follows in a
+  // separate one once the pattern is validated.
+  private async runBuildPhase(
+    sessionId: string,
+    input: PhaseEvalInput,
+    fingerprint: string,
+    overrideModel: string | undefined,
+  ): Promise<PhaseEvaluation> {
+    this.logger.log(`Running build agent for session ${sessionId}`);
+    const result = await this.buildAgent.evaluate(input);
+
+    try {
+      const persisted = await this.evalsRepo.createPhaseEvaluation(
+        sessionId,
+        'build',
+        result,
+        fingerprint,
+      );
+      await this.evalsRepo.createEvaluationAudit(persisted.id, result.audit);
+      this.eventEmitter.emit(
+        EvaluationCompletedEvent.eventName,
+        new EvaluationCompletedEvent(persisted.id, sessionId, 'build', overrideModel),
+      );
+      return persisted;
+    } catch (err) {
+      if (!isUniqueConstraintViolation(err)) throw err;
+      const winner = await this.evalsRepo.findByFingerprint(sessionId, 'build', fingerprint);
+      if (!winner) throw err;
+      this.logger.warn(
+        `Concurrent race on build eval for session ${sessionId} — ` +
+          `duplicate LLM call paid, returning winner's row ${winner.id}.`,
+      );
+      return winner;
+    }
   }
 
   // Resolve the model that will actually be used for this phase — same
@@ -195,10 +315,11 @@ export class OrchestratorService {
       `buildAgent.run(${event.sessionId})`,
     );
   }
+}
 
-  private agentFor(phase: Phase): BasePhaseAgent | null {
-    if (phase === 'plan') return this.planAgent;
-    if (phase === 'build') return this.buildAgent;
-    return null;
-  }
+// Cap detailsError text at a reasonable size so a multi-KB LLM error
+// message doesn't bloat every API response that includes the row.
+function truncateError(msg: string): string {
+  const MAX = 500;
+  return msg.length > MAX ? `${msg.slice(0, MAX)}…(truncated)` : msg;
 }
