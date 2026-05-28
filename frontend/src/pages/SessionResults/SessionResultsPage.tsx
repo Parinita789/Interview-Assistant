@@ -102,6 +102,28 @@ export function SessionResultsPage() {
     queryKey: ['evals', id],
     queryFn: () => evaluationsService.listForSession(id!),
     enabled: !!id,
+    // Two-call plan eval polling: when the most-recent plan eval row
+    // has neither detailsCompletedAt nor detailsError, Call B is still
+    // in flight. Poll every 3s until one of them lands. Build rows
+    // (and any pre-migration plan rows where both are null because
+    // they predate the split) won't ever flip — so we only poll if
+    // the row was created recently. Without that guard, every old
+    // session loaded in the UI would poll forever.
+    refetchInterval: (q) => {
+      const rows = (q.state.data as PhaseEvaluation[] | undefined) ?? [];
+      const latestPlan = rows
+        .filter((r) => r.phase === 'plan')
+        .sort((a, b) => (a.evaluatedAt < b.evaluatedAt ? 1 : -1))[0];
+      if (!latestPlan) return false;
+      if (latestPlan.detailsCompletedAt || latestPlan.detailsError) return false;
+      // Only poll for "recent" rows — i.e., where the row is younger
+      // than the 5min reasonable upper bound on Call B latency. An
+      // older row with both nulls is a legacy pre-split row and will
+      // never get patched.
+      const ageMs = Date.now() - new Date(latestPlan.evaluatedAt).getTime();
+      if (ageMs > 5 * 60 * 1000) return false;
+      return 3000;
+    },
   });
 
   const snapshotQuery = useQuery({
@@ -535,31 +557,86 @@ function PlanEvaluationView({
 
       {rubric && <ScoreBreakdown rubric={rubric} evaluation={evaluation} />}
 
-      {evaluation.feedbackText && (
-        <DeepDiveDisclosure
-          evaluationId={evaluation.id}
-          feedbackText={evaluation.feedbackText}
-        />
-      )}
+      {/*
+        Two-call plan eval state machine. Call A persists the row with
+        score + signals; Call B patches feedback + top_actions + gaps
+        in the background. While Call B is in-flight, show skeletons
+        so the user knows more content is on the way (otherwise the
+        sections would silently render nothing and look broken).
+       */}
+      {(() => {
+        const isPlanCallBPending =
+          evaluation.phase === 'plan' &&
+          !evaluation.detailsCompletedAt &&
+          !evaluation.detailsError &&
+          evaluation.feedbackText === '';
 
-      {evaluation.topActionableItems.length > 0 && (
-        <section>
-          <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
-            Recommended {phaseLabel.toLowerCase()} improvements
-          </h3>
-          <ol className="rounded border border-gray-300 bg-white p-3 text-sm space-y-1 list-decimal list-inside">
-            {evaluation.topActionableItems.map((item, i) => (
-              <li key={i} className="pl-1">
-                {item}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
+        if (evaluation.phase === 'plan' && evaluation.detailsError) {
+          return (
+            <section className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="font-medium mb-1">Details unavailable</div>
+              <div className="text-xs">
+                {evaluation.detailsError}. Score and signals are based on the first-pass evaluation; evidence quotes, narrative feedback, and gap topics could not be generated.
+              </div>
+            </section>
+          );
+        }
 
-      {evaluation.gapTopics && evaluation.gapTopics.length > 0 && (
-        <GapTopicsSection topics={evaluation.gapTopics} />
-      )}
+        if (isPlanCallBPending) {
+          return (
+            <>
+              <section>
+                <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
+                  Feedback
+                </h3>
+                <DetailsPendingSkeleton lines={3} />
+              </section>
+              <section>
+                <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
+                  Recommended {phaseLabel.toLowerCase()} improvements
+                </h3>
+                <DetailsPendingSkeleton lines={2} />
+              </section>
+              <section>
+                <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
+                  Gap topics
+                </h3>
+                <DetailsPendingSkeleton lines={2} />
+              </section>
+            </>
+          );
+        }
+
+        return (
+          <>
+            {evaluation.feedbackText && (
+              <DeepDiveDisclosure
+                evaluationId={evaluation.id}
+                feedbackText={evaluation.feedbackText}
+              />
+            )}
+
+            {evaluation.topActionableItems.length > 0 && (
+              <section>
+                <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
+                  Recommended {phaseLabel.toLowerCase()} improvements
+                </h3>
+                <ol className="rounded border border-gray-300 bg-white p-3 text-sm space-y-1 list-decimal list-inside">
+                  {evaluation.topActionableItems.map((item, i) => (
+                    <li key={i} className="pl-1">
+                      {item}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+
+            {evaluation.gapTopics && evaluation.gapTopics.length > 0 && (
+              <GapTopicsSection topics={evaluation.gapTopics} />
+            )}
+          </>
+        );
+      })()}
 
       {!rubric ? (
         <section>
@@ -623,6 +700,30 @@ function PlanEvaluationView({
         </>
       )}
     </>
+  );
+}
+
+function DetailsPendingSkeleton({ lines }: { lines: number }) {
+  // Subtle pulsing bars while Call B is running. Each bar has a
+  // slightly different width so the placeholder doesn't look like a
+  // rigid grid; the pulse makes "still loading" obvious vs a section
+  // that just has no data.
+  const widths = ['w-11/12', 'w-10/12', 'w-9/12', 'w-8/12', 'w-7/12'];
+  return (
+    <div className="rounded border border-gray-200 bg-white p-3 text-sm">
+      <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-2">
+        <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+        Generating evidence + feedback…
+      </div>
+      <div className="space-y-2">
+        {Array.from({ length: lines }).map((_, i) => (
+          <div
+            key={i}
+            className={`h-3 rounded bg-gray-200 animate-pulse ${widths[i % widths.length]}`}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -16,6 +16,14 @@ export interface PhaseEvaluation {
   gapTopics: GapTopic[];
   evaluatedAt: string;
   modelUsed?: string | null;
+  // Two-call plan eval split. Call A persists the row with score +
+  // signalResults; the detail fields (feedbackText, topActionableItems,
+  // gapTopics) are seeded empty and Call B patches them in the
+  // background. Frontend polls until detailsCompletedAt is set or
+  // detailsError is non-null. Build-phase rows leave both null —
+  // the legacy single-call shape doesn't use this state machine.
+  detailsCompletedAt?: string | null;
+  detailsError?: string | null;
 }
 
 export interface GapTopic {
