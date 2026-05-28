@@ -1,4 +1,4 @@
-description: "Non-AI question (log pipeline). Verifies the relevance-gating rule: AI signals must be skipped, not missed."
+description: "Non-AI question (log pipeline) graded by the traditional_design rubric. The seven agentic signals this fixture originally asserted as 'skipped' are no longer in traditional_design after the v2.0 variant split — relevance gating is now enforced at the rubric-loader layer rather than per-evaluation. Fixture now checks the design-mode bar on a log-pipeline question."
 question: "Design a log ingestion pipeline that handles 50K events/sec from microservices, retains 30 days of hot data, and supports ad-hoc queries."
 rubricVersion: v2.0
 kind: traditional_design
@@ -14,16 +14,8 @@ expectedSignals:
     - shape_and_seams
   miss: []
   hit: []
-  # The headline test of this fixture: domain-restricted signals must be
-  # marked cannot_evaluate (not miss) on a non-AI log-pipeline problem.
-  # The seven applies_to: [agentic] signals all carry that tag now and
-  # should gate cleanly via the rubric loader -> prompt path.
+  # Only ai_strategy_explicit remains in traditional_design (with
+  # applies_to gating). The other 7 agentic signals don't exist in
+  # this rubric variant after the split — there's nothing to skip.
   skipped:
     - ai_strategy_explicit
-    - inference_cost_articulated
-    - latency_strategy_for_agent_calls
-    - output_validation_layer
-    - provider_abstraction_and_failover
-    - nondeterminism_handling
-    - agent_observability
-    - agent_state_management

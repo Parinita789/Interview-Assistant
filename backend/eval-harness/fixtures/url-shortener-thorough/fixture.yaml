@@ -7,13 +7,15 @@ expectedScore:
   min: 3.5
   max: 5.0
 
+# Note: `validation_plan_concrete` used to be expected here but it
+# now lives in the agentic_build variant only — design-only questions
+# don't carry build-mode signals after the v2.0 rubric variant split.
 expectedSignals:
   credited:
     - scope_specificity
     - dual_scale_nfrs
     - data_model_committed
     - shape_and_seams
-    - validation_plan_concrete
   miss: []
   hit: []
   skipped:

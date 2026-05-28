@@ -8,9 +8,11 @@ expectedScore:
   min: 0.0
   max: 2.0
 
+# Note: `validation_plan_concrete` was previously asserted miss but
+# now lives in the agentic_build variant only — design-only questions
+# don't carry build-mode signals after the v2.0 rubric variant split.
 expectedSignals:
   miss:
-    - validation_plan_concrete
     - data_model_committed
   credited: []
   hit: []
