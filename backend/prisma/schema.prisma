@@ -60,11 +60,20 @@ model User {
   // cache-invalidation, audit trails, and future "user changed
   // password / email / displayName" flows.
   updatedAt    DateTime   @updatedAt @map("updated_at")
+  // Soft-delete timestamp. Non-null = user has self-deleted; the row
+  // stays so owned resources (Question / Session / LlmSpend) can be
+  // recovered manually, but UsersRepository's default finders exclude
+  // it so login / /auth/me / signup-uniqueness all behave as if the
+  // user no longer exists. Email's @unique constraint is preserved —
+  // re-signup with a soft-deleted email returns 409, mirroring the
+  // "email taken forever" decision.
+  deletedAt    DateTime?  @map("deleted_at")
 
   questions Question[]
   sessions  Session[]
   llmSpend  LlmSpend[]
 
+  @@index([deletedAt])
   @@map("users")
 }
 

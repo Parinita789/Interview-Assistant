@@ -1,4 +1,13 @@
-import { Body, Controller, Get, HttpCode, NotFoundException, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  NotFoundException,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AUTH_BRUTE_FORCE_THROTTLE } from '../../throttling/throttle-presets';
@@ -56,5 +65,24 @@ export class AuthController {
       displayName: row.displayName,
       createdAt: row.createdAt,
     };
+  }
+
+  // Self-service account soft-delete. Idempotent — the same JWT can
+  // be replayed against this endpoint without effect after the first
+  // call. Throttled under the same anti-brute-force preset as the
+  // other account-mutation surfaces.
+  //
+  // After 204, the caller's existing JWT keeps signing-verifying
+  // until natural expiry, but every endpoint that loads the user via
+  // UsersRepository (auth/me, ownership-checked reads) will see them
+  // as gone. Frontend's responsibility to clear local auth state.
+  @Delete('me')
+  @UseGuards(AuthGuard)
+  @HttpCode(204)
+  @Throttle(AUTH_BRUTE_FORCE_THROTTLE)
+  @ApiOperation({ summary: 'Soft-delete the current account.' })
+  async deleteMe(@CurrentUser() user: AuthenticatedUser | undefined): Promise<void> {
+    if (!user) throw new NotFoundException('No authenticated user on the request.');
+    await this.auth.softDeleteAccount(user.id);
   }
 }

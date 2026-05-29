@@ -17,11 +17,13 @@ function makeSvc(overrides: {
   findByEmail?: jest.Mock;
   findById?: jest.Mock;
   create?: jest.Mock;
+  softDelete?: jest.Mock;
 }) {
   const users = {
     findByEmail: overrides.findByEmail ?? jest.fn().mockResolvedValue(null),
     findById: overrides.findById ?? jest.fn().mockResolvedValue(null),
     create: overrides.create ?? jest.fn(),
+    softDelete: overrides.softDelete ?? jest.fn().mockResolvedValue(undefined),
   };
   const passwords = new PasswordService();
   const jwt = makeJwt();
@@ -186,5 +188,33 @@ describe('AuthService.verify', () => {
     const token = otherJwt.sign({ sub: 'uid-1', email: 'a@b.c' });
     const { svc } = makeSvc({});
     await expect(svc.verify(token)).rejects.toBeInstanceOf(InvalidTokenError);
+  });
+});
+
+describe('AuthService.softDeleteAccount', () => {
+  it('delegates to UsersRepository.softDelete with the user id', async () => {
+    const softDelete = jest.fn().mockResolvedValue(undefined);
+    const { svc, users } = makeSvc({ softDelete });
+    await svc.softDeleteAccount('uid-1');
+    expect(users.softDelete).toHaveBeenCalledWith('uid-1');
+  });
+
+  it('propagates DB errors (does not swallow real failures)', async () => {
+    const softDelete = jest.fn().mockRejectedValue(new Error('connection reset'));
+    const { svc } = makeSvc({ softDelete });
+    await expect(svc.softDeleteAccount('uid-1')).rejects.toThrow(/connection reset/);
+  });
+});
+
+describe('AuthService.login — soft-delete interaction', () => {
+  it('treats a soft-deleted user as nonexistent (same 401 path, same timing)', async () => {
+    // UsersRepository.findByEmail default-excludes soft-deleted, so it
+    // returns null on a soft-deleted account. The service path is the
+    // same as a never-existed user — dummy bcrypt + InvalidCredentialsError.
+    const findByEmail = jest.fn().mockResolvedValue(null);
+    const { svc } = makeSvc({ findByEmail });
+    await expect(
+      svc.login('soft-deleted@example.com', 'whatever-password'),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 });

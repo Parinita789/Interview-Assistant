@@ -8,10 +8,13 @@ function makeController(opts: {
   signup?: jest.Mock;
   login?: jest.Mock;
   findById?: jest.Mock;
+  softDeleteAccount?: jest.Mock;
 } = {}) {
   const auth = {
     signup: opts.signup ?? jest.fn().mockResolvedValue({ user: {}, token: 't' }),
     login: opts.login ?? jest.fn().mockResolvedValue({ user: {}, token: 't' }),
+    softDeleteAccount:
+      opts.softDeleteAccount ?? jest.fn().mockResolvedValue(undefined),
   } as unknown as AuthService;
   const users = {
     findById:
@@ -81,5 +84,19 @@ describe('AuthController.me', () => {
     const findById = jest.fn().mockResolvedValue(null);
     const { ctrl } = makeController({ findById });
     await expect(ctrl.me(principal)).rejects.toThrow(/User uid-1 not found/);
+  });
+});
+
+describe('AuthController.deleteMe', () => {
+  it('delegates to AuthService.softDeleteAccount with the principal id', async () => {
+    const softDeleteAccount = jest.fn().mockResolvedValue(undefined);
+    const { ctrl, auth } = makeController({ softDeleteAccount });
+    await ctrl.deleteMe(principal);
+    expect(auth.softDeleteAccount).toHaveBeenCalledWith('uid-1');
+  });
+
+  it('throws 404 when @CurrentUser is absent (defensive — AuthGuard should prevent)', async () => {
+    const { ctrl } = makeController();
+    await expect(ctrl.deleteMe(undefined)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

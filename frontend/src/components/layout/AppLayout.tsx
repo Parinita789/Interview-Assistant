@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useMatch, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { authService } from '@/services/auth.service';
 import { questionsService } from '@/services/questions.service';
 import { sessionsService } from '@/services/sessions.service';
 import { useSessionStore } from '@/store/sessionStore';
@@ -42,6 +43,21 @@ export function AppLayout() {
     queryClient.clear();
     navigate('/login', { replace: true });
   };
+
+  // Account self-deletion. Same local-state cleanup as logout once the
+  // server has marked the row soft-deleted; the JWT remains valid up
+  // to its natural expiry but every loaded-user endpoint (auth/me,
+  // ownership reads) will see the user as gone.
+  const [confirmingDeleteAccount, setConfirmingDeleteAccount] = useState(false);
+  const deleteAccountMutation = useMutation({
+    mutationFn: authService.deleteAccount,
+    onSuccess: () => {
+      setConfirmingDeleteAccount(false);
+      clearAuth();
+      queryClient.clear();
+      navigate('/login', { replace: true });
+    },
+  });
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -217,20 +233,30 @@ export function AppLayout() {
             </div>
             <DailySpendBadge />
             {currentUser && (
-              <div className="border-t border-gray-200 px-3 py-2 flex items-center justify-between">
+              <div className="border-t border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
                 <span
-                  className="text-xs text-gray-600 truncate"
+                  className="text-xs text-gray-600 truncate flex-1"
                   title={currentUser.email}
                 >
                   {currentUser.email}
                 </span>
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="ml-2 shrink-0 text-xs text-gray-500 hover:text-gray-900 underline"
-                >
-                  Sign out
-                </button>
+                <div className="shrink-0 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="text-xs text-gray-500 hover:text-gray-900 underline"
+                  >
+                    Sign out
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteAccount(true)}
+                    className="text-xs text-rose-600 hover:text-rose-800 underline"
+                    title="Permanently disable your account"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             )}
           </>
@@ -249,6 +275,23 @@ export function AppLayout() {
             if (deleteMutation.isPending) return;
             deleteMutation.reset();
             setDeletingQuestion(null);
+          }}
+        />
+      )}
+      {confirmingDeleteAccount && (
+        <ConfirmDeleteAccountDialog
+          email={currentUser?.email ?? ''}
+          isPending={deleteAccountMutation.isPending}
+          error={
+            deleteAccountMutation.isError
+              ? extractApiError(deleteAccountMutation.error)
+              : null
+          }
+          onConfirm={() => deleteAccountMutation.mutate()}
+          onDismiss={() => {
+            if (deleteAccountMutation.isPending) return;
+            deleteAccountMutation.reset();
+            setConfirmingDeleteAccount(false);
           }}
         />
       )}
@@ -357,6 +400,100 @@ function ConfirmDeleteQuestionDialog({
             className="rounded bg-rose-700 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? 'Deleting…' : `Delete question + ${attemptCount} ${attemptLabel}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDeleteAccountDialog({
+  email,
+  isPending,
+  error,
+  onConfirm,
+  onDismiss,
+}: {
+  email: string;
+  isPending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  // Require the user to type their email to confirm — guards against
+  // accidental clicks; standard pattern for destructive account flows.
+  const [typed, setTyped] = useState('');
+  const matches = typed.trim().toLowerCase() === email.trim().toLowerCase();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isPending) return;
+      if (e.key === 'Escape') onDismiss();
+      // Enter does NOT confirm here — too easy to mis-fire on a
+      // destructive irreversible action while typing the email.
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onDismiss, isPending]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      onClick={isPending ? undefined : onDismiss}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-white shadow-xl border border-rose-300"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-4 pb-3">
+          <h2 className="text-base font-semibold text-rose-900">
+            Delete your account?
+          </h2>
+          <p className="mt-2 text-sm text-gray-700">
+            This signs you out and disables your account immediately. Your past
+            questions, sessions, and evaluations stay in the database but become
+            unreachable through this UI. The email{' '}
+            <strong className="font-medium text-gray-900">{email}</strong> can't
+            be used to sign up again.
+          </p>
+          <label className="mt-3 block">
+            <span className="text-xs text-gray-700">
+              Type your email to confirm:
+            </span>
+            <input
+              type="text"
+              autoFocus
+              autoComplete="off"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={isPending}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-rose-500 focus:ring focus:ring-rose-200 focus:ring-opacity-50"
+            />
+          </label>
+        </div>
+        {error && (
+          <div className="mx-5 mb-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
+            Couldn't delete: {error}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 px-5 py-3 bg-gray-50 rounded-b-lg">
+          <button
+            type="button"
+            onClick={onDismiss}
+            disabled={isPending}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isPending || !matches}
+            className="rounded bg-rose-700 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPending ? 'Deleting…' : 'Delete my account'}
           </button>
         </div>
       </div>

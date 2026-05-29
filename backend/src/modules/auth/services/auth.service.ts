@@ -71,6 +71,22 @@ export class AuthService {
     return { user: toSafeUser(user), token: this.signToken(user) };
   }
 
+  // Soft-delete the user's own account. The repository's default
+  // finders exclude soft-deleted users, so subsequent login / /auth/me
+  // / signup-uniqueness behave as if the account never existed.
+  //
+  // Known caveat: the user's existing JWT remains cryptographically
+  // valid until its natural expiry (~24h). The AuthGuard intentionally
+  // does NOT do a per-request DB lookup — the cost of that lookup on
+  // every authed endpoint outweighs the benefit of instant revocation
+  // at the current scale. When admin-revoke or compromised-account
+  // flows ship, switch to either token versioning (embed
+  // user.tokenVersion in the JWT, bump on revoke, reject mismatch) or
+  // a Redis denylist keyed by jti.
+  async softDeleteAccount(userId: string): Promise<void> {
+    await this.users.softDelete(userId);
+  }
+
   // Verifies a token and returns its payload, or throws
   // InvalidTokenError. JwtService throws TokenExpiredError /
   // JsonWebTokenError under the hood; we translate to our error shape

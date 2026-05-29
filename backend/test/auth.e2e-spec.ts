@@ -100,4 +100,76 @@ describe('Auth boundaries (e2e)', () => {
       await request(app.getHttpServer()).get('/api/sessions').expect(401);
     });
   });
+
+  describe('Soft-delete: DELETE /api/auth/me', () => {
+    it('returns 204 and makes the account unreachable to login + /auth/me', async () => {
+      const user = await signupUser(app, {
+        email: 'sd-flow@test.local',
+        password: 'integration-test-password-1234',
+      });
+
+      // Soft-delete the account.
+      await request(app.getHttpServer())
+        .delete('/api/auth/me')
+        .set(authHeader(user))
+        .expect(204);
+
+      // Login with the correct password now returns 401 — the account
+      // is treated as nonexistent (UsersRepository.findByEmail excludes
+      // soft-deleted). No enumeration leak vs. wrong-password timing.
+      await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({
+          email: 'sd-flow@test.local',
+          password: 'integration-test-password-1234',
+        })
+        .expect(401);
+
+      // /auth/me with the still-valid JWT returns 404 — token decodes
+      // fine (caveat documented in AuthService.softDeleteAccount) but
+      // the user row no longer matches UsersRepository.findById. The
+      // frontend treats 404 here as a sign to clear local auth state.
+      await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set(authHeader(user))
+        .expect(404);
+    });
+
+    it('blocks re-signup with the same email (email is unique forever)', async () => {
+      const user = await signupUser(app, { email: 'sd-reuse@test.local' });
+      await request(app.getHttpServer())
+        .delete('/api/auth/me')
+        .set(authHeader(user))
+        .expect(204);
+
+      // Attempt to re-create with the same email — Prisma unique
+      // constraint still fires, P2002 translates to 409.
+      await request(app.getHttpServer())
+        .post('/api/auth/signup')
+        .send({
+          email: 'sd-reuse@test.local',
+          password: 'integration-test-password-1234',
+          displayName: 'Second Try',
+        })
+        .expect(409);
+    });
+
+    it('is idempotent (second DELETE returns 204; the row is already soft-deleted)', async () => {
+      const user = await signupUser(app, { email: 'sd-idempotent@test.local' });
+      await request(app.getHttpServer())
+        .delete('/api/auth/me')
+        .set(authHeader(user))
+        .expect(204);
+      // Token still cryptographically valid; AuthGuard passes; service
+      // refreshes the deletedAt timestamp without throwing.
+      await request(app.getHttpServer())
+        .delete('/api/auth/me')
+        .set(authHeader(user))
+        .expect(204);
+    });
+
+    it('DELETE without a token returns 401', async () => {
+      await request(app.getHttpServer()).delete('/api/auth/me').expect(401);
+    });
+  });
 });
