@@ -9,4 +9,9 @@ export class SignupDto {
   @MinLength(8)
   @MaxLength(50)
   password!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  displayName!: string;
 }

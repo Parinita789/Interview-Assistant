@@ -23,11 +23,16 @@ describe('Auth boundaries (e2e)', () => {
     it('signup returns a JWT + SafeUser (no passwordHash leak)', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/auth/signup')
-        .send({ email: 'first@test.local', password: 'goodpassword1234' })
+        .send({
+          email: 'first@test.local',
+          password: 'goodpassword1234',
+          displayName: 'First User',
+        })
         .expect(201);
 
       expect(res.body.token).toMatch(/^eyJ/); // JWT header is base64-encoded "{
       expect(res.body.user.email).toBe('first@test.local');
+      expect(res.body.user.displayName).toBe('First User');
       expect(res.body.user).not.toHaveProperty('passwordHash');
     });
 
@@ -59,7 +64,11 @@ describe('Auth boundaries (e2e)', () => {
       await signupUser(app, { email: 'dup@test.local' });
       await request(app.getHttpServer())
         .post('/api/auth/signup')
-        .send({ email: 'dup@test.local', password: 'integration-test-password-1234' })
+        .send({
+          email: 'dup@test.local',
+          password: 'integration-test-password-1234',
+          displayName: 'Dup',
+        })
         .expect(409);
     });
   });

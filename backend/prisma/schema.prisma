@@ -51,7 +51,15 @@ model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique
   passwordHash String     @map("password_hash")
+  // Human-readable name shown in the UI (sidebar, share blocks, etc.).
+  // Required at signup so we never have to fall back to an email-prefix
+  // placeholder; backfilled on the legacy rows during the migration.
+  displayName  String     @map("display_name")
   createdAt    DateTime   @default(now()) @map("created_at")
+  // Auto-updates on every save via Prisma's @updatedAt. Useful for
+  // cache-invalidation, audit trails, and future "user changed
+  // password / email / displayName" flows.
+  updatedAt    DateTime   @updatedAt @map("updated_at")
 
   questions Question[]
   sessions  Session[]

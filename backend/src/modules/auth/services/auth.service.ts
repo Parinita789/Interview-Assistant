@@ -23,8 +23,13 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  async signup(email: string, password: string): Promise<AuthResult> {
+  async signup(
+    email: string,
+    password: string,
+    displayName: string,
+  ): Promise<AuthResult> {
     const normalized = normalizeEmail(email);
+    const trimmedName = displayName.trim();
     const existing = await this.users.findByEmail(normalized);
     if (existing) throw new EmailAlreadyRegisteredError();
     const passwordHash = await this.passwords.hash(password);
@@ -36,7 +41,11 @@ export class AuthService {
     // failures (connection drop, etc.) propagate as-is.
     let user;
     try {
-      user = await this.users.create({ email: normalized, passwordHash });
+      user = await this.users.create({
+        email: normalized,
+        passwordHash,
+        displayName: trimmedName,
+      });
     } catch (err) {
       if (isUniqueConstraintViolation(err)) throw new EmailAlreadyRegisteredError();
       throw err;
@@ -102,7 +111,12 @@ function isUniqueConstraintViolation(err: unknown): boolean {
 }
 
 function toSafeUser(user: User): SafeUser {
-  return { id: user.id, email: user.email, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    createdAt: user.createdAt,
+  };
 }
 
 // A real bcrypt hash of "unreachable-sentinel" at cost 12. Used by

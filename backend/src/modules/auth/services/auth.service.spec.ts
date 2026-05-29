@@ -34,13 +34,19 @@ describe('AuthService.signup', () => {
       id: 'uid-1',
       email: 'alice@example.com',
       passwordHash: 'irrelevant',
+      displayName: 'Alice',
       createdAt: new Date('2026-05-19T10:00:00Z'),
     });
     const { svc } = makeSvc({ create });
-    const result = await svc.signup('Alice@Example.com', 'correct horse battery staple');
+    const result = await svc.signup(
+      'Alice@Example.com',
+      'correct horse battery staple',
+      'Alice',
+    );
     expect(result.user).toEqual({
       id: 'uid-1',
       email: 'alice@example.com',
+      displayName: 'Alice',
       createdAt: new Date('2026-05-19T10:00:00Z'),
     });
     expect(typeof result.token).toBe('string');
@@ -55,9 +61,9 @@ describe('AuthService.signup', () => {
     const findByEmail = jest.fn().mockResolvedValue({ id: 'uid-1', email: 'taken@example.com' });
     const create = jest.fn();
     const { svc } = makeSvc({ findByEmail, create });
-    await expect(svc.signup('taken@example.com', 'password123456')).rejects.toBeInstanceOf(
-      EmailAlreadyRegisteredError,
-    );
+    await expect(
+      svc.signup('taken@example.com', 'password123456', 'Taken'),
+    ).rejects.toBeInstanceOf(EmailAlreadyRegisteredError);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -71,18 +77,18 @@ describe('AuthService.signup', () => {
       message: 'Unique constraint failed on users.email',
     });
     const { svc } = makeSvc({ findByEmail, create });
-    await expect(svc.signup('race@example.com', 'password123456')).rejects.toBeInstanceOf(
-      EmailAlreadyRegisteredError,
-    );
+    await expect(
+      svc.signup('race@example.com', 'password123456', 'Racer'),
+    ).rejects.toBeInstanceOf(EmailAlreadyRegisteredError);
   });
 
   it('propagates non-P2002 errors from create() (does not swallow real failures)', async () => {
     const findByEmail = jest.fn().mockResolvedValue(null);
     const create = jest.fn().mockRejectedValue(new Error('connection reset by peer'));
     const { svc } = makeSvc({ findByEmail, create });
-    await expect(svc.signup('alice@example.com', 'password123456')).rejects.toThrow(
-      /connection reset/,
-    );
+    await expect(
+      svc.signup('alice@example.com', 'password123456', 'Alice'),
+    ).rejects.toThrow(/connection reset/);
   });
 
   it('normalizes email to lowercase + trimmed before checking uniqueness', async () => {
@@ -94,7 +100,7 @@ describe('AuthService.signup', () => {
       createdAt: new Date(),
     });
     const { svc } = makeSvc({ findByEmail, create });
-    await svc.signup('  ALICE@example.COM  ', 'password123456');
+    await svc.signup('  ALICE@example.COM  ', 'password123456', '  Alice  ');
     expect(findByEmail).toHaveBeenCalledWith('alice@example.com');
     expect(create.mock.calls[0][0].email).toBe('alice@example.com');
   });

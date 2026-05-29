@@ -17,7 +17,9 @@ export class UsersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  create(data: Pick<Prisma.UserCreateInput, 'email' | 'passwordHash'>): Promise<User> {
+  create(
+    data: Pick<Prisma.UserCreateInput, 'email' | 'passwordHash' | 'displayName'>,
+  ): Promise<User> {
     return this.prisma.user.create({ data });
   }
 }

@@ -53,9 +53,13 @@ describe('UsersRepository.create', () => {
       passwordHash: '$2b$12$xxx',
       createdAt: new Date(),
     });
-    await repo.create({ email: 'a@b.com', passwordHash: '$2b$12$xxx' });
+    await repo.create({
+      email: 'a@b.com',
+      passwordHash: '$2b$12$xxx',
+      displayName: 'Alice',
+    });
     expect(prisma.user.create).toHaveBeenCalledWith({
-      data: { email: 'a@b.com', passwordHash: '$2b$12$xxx' },
+      data: { email: 'a@b.com', passwordHash: '$2b$12$xxx', displayName: 'Alice' },
     });
   });
 });

@@ -4,6 +4,7 @@ import type { AuthUser } from '@/store/authStore';
 export interface SignupRequest {
   email: string;
   password: string;
+  displayName: string;
 }
 
 export interface LoginRequest {

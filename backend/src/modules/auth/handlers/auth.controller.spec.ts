@@ -31,8 +31,12 @@ const principal: AuthenticatedUser = { id: 'uid-1', email: 'a@b.com' } as Authen
 describe('AuthController.signup', () => {
   it('delegates the DTO fields to AuthService.signup verbatim', async () => {
     const { ctrl, auth } = makeController();
-    await ctrl.signup({ email: 'x@y.com', password: 'pw-long-enough-12' });
-    expect(auth.signup).toHaveBeenCalledWith('x@y.com', 'pw-long-enough-12');
+    await ctrl.signup({
+      email: 'x@y.com',
+      password: 'pw-long-enough-12',
+      displayName: 'X Y',
+    });
+    expect(auth.signup).toHaveBeenCalledWith('x@y.com', 'pw-long-enough-12', 'X Y');
   });
 });
 

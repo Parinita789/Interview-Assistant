@@ -28,7 +28,7 @@ export class AuthController {
   @Throttle(AUTH_BRUTE_FORCE_THROTTLE)
   @ApiOperation({ summary: 'Create a new account and return a JWT + user.' })
   signup(@Body() dto: SignupDto) {
-    return this.auth.signup(dto.email, dto.password);
+    return this.auth.signup(dto.email, dto.password, dto.displayName);
   }
 
   @Post('login')
@@ -50,6 +50,11 @@ export class AuthController {
     if (!user) throw new NotFoundException('No authenticated user on the request.');
     const row = await this.users.findById(user.id);
     if (!row) throw new NotFoundException(`User ${user.id} not found.`);
-    return { id: row.id, email: row.email, createdAt: row.createdAt };
+    return {
+      id: row.id,
+      email: row.email,
+      displayName: row.displayName,
+      createdAt: row.createdAt,
+    };
   }
 }

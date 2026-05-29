@@ -6,15 +6,19 @@ import { useAuthStore } from '@/store/authStore';
 import { describeError } from '@/lib/error';
 
 // Mirrors the backend SignupDto: email + password (8–50 chars,
-// matching the @MinLength(8) + @MaxLength(50) on the DTO).
+// matching the @MinLength(8) + @MaxLength(50) on the DTO) + displayName
+// (1–50 chars, required, trimmed before send).
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 50;
+const NAME_MIN = 1;
+const NAME_MAX = 50;
 
 export function SignupPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.setAuth);
   const queryClient = useQueryClient();
 
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -31,9 +35,15 @@ export function SignupPage() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    mutation.mutate({ email: email.trim(), password });
+    mutation.mutate({
+      email: email.trim(),
+      password,
+      displayName: displayName.trim(),
+    });
   };
 
+  const trimmedName = displayName.trim();
+  const nameOk = trimmedName.length >= NAME_MIN && trimmedName.length <= NAME_MAX;
   const passwordOk = password.length >= PASSWORD_MIN && password.length <= PASSWORD_MAX;
 
   return (
@@ -49,6 +59,20 @@ export function SignupPage() {
         </p>
 
         <form onSubmit={onSubmit} className="space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Name</span>
+            <input
+              type="text"
+              autoComplete="name"
+              required
+              minLength={NAME_MIN}
+              maxLength={NAME_MAX}
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50 px-3 py-2 border"
+            />
+          </label>
+
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Email</span>
             <input
@@ -93,7 +117,7 @@ export function SignupPage() {
 
           <button
             type="submit"
-            disabled={mutation.isPending || !email || !passwordOk}
+            disabled={mutation.isPending || !nameOk || !email || !passwordOk}
             className="w-full bg-blue-600 text-white rounded-md py-2 px-4 font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {mutation.isPending ? 'Creating account…' : 'Create account'}
