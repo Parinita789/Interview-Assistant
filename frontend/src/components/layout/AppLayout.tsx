@@ -1,501 +1,176 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useMatch, useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authService } from '@/services/auth.service';
-import { questionsService } from '@/services/questions.service';
-import { sessionsService } from '@/services/sessions.service';
-import { useSessionStore } from '@/store/sessionStore';
-import { useAuthStore } from '@/store/authStore';
-import { extractApiError } from '@/lib/error';
 import { DailySpendBadge } from '@components/layout/DailySpendBadge';
-import type { QuestionWithSessions } from '@/types/question';
+import { useAuthStore } from '@/store/authStore';
 
 const SIDEBAR_COLLAPSED_KEY = 'app-sidebar-collapsed';
 
-function relativeTime(iso: string): string {
-  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (sec < 60) return 'just now';
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.floor(hr / 24);
-  return `${d}d ago`;
-}
-
 export function AppLayout() {
-  const sessionMatch = useMatch('/sessions/:id/*');
-  const activeSessionId = sessionMatch?.params.id;
-  const questionMatch = useMatch('/questions/:id');
-  const activeQuestionId = questionMatch?.params.id;
-
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const forgetSession = useSessionStore((s) => s.forget);
+  const homeMatch = useMatch('/home');
+  const questionMatch = useMatch('/questions/:id');
+  const newPracticeMatch = useMatch('/practice/new');
+  const isQuestionsActive = !!homeMatch || !!questionMatch || !!newPracticeMatch;
   const currentUser = useAuthStore((s) => s.user);
   const clearAuth = useAuthStore((s) => s.clearAuth);
-
-  const onLogout = () => {
-    // Clear the persisted token and Tan​Stack caches together — leaving
-    // the user-scoped cache around after a sign-out would briefly show
-    // the previous user's data to the next sign-in until refetch.
-    clearAuth();
-    queryClient.clear();
-    navigate('/login', { replace: true });
-  };
-
-  // Account self-deletion. Same local-state cleanup as logout once the
-  // server has marked the row soft-deleted; the JWT remains valid up
-  // to its natural expiry but every loaded-user endpoint (auth/me,
-  // ownership reads) will see the user as gone.
-  const [confirmingDeleteAccount, setConfirmingDeleteAccount] = useState(false);
-  const deleteAccountMutation = useMutation({
-    mutationFn: authService.deleteAccount,
-    onSuccess: () => {
-      setConfirmingDeleteAccount(false);
-      clearAuth();
-      queryClient.clear();
-      navigate('/login', { replace: true });
-    },
-  });
-
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
   });
+  const [profileOpen, setProfileOpen] = useState(false);
+
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
   }, [collapsed]);
 
-  const activeSessionQuery = useQuery({
-    queryKey: ['session', activeSessionId],
-    queryFn: () => sessionsService.get(activeSessionId!),
-    enabled: !!activeSessionId,
-  });
-  const highlightQuestionId = activeQuestionId ?? activeSessionQuery.data?.questionId;
+  useEffect(() => {
+    if (!profileOpen) return;
 
-  const questionsQuery = useQuery({
-    queryKey: ['questions'],
-    queryFn: () => questionsService.list(),
-  });
+    const onPointerDown = (event: PointerEvent) => {
+      if (profileMenuRef.current?.contains(event.target as Node)) return;
+      setProfileOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false);
+    };
 
-  const [deletingQuestion, setDeletingQuestion] = useState<QuestionWithSessions | null>(null);
-  const deleteMutation = useMutation({
-    mutationFn: (questionId: string) => questionsService.delete(questionId),
-    onSuccess: (_out, questionId) => {
-      const question = questionsQuery.data?.find((q) => q.id === questionId);
-      const sessionIds = question?.sessions.map((s) => s.id) ?? [];
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [profileOpen]);
 
-      const onDeletedQuestion = activeQuestionId === questionId;
-      const onDeletedSession =
-        !!activeSessionId && sessionIds.includes(activeSessionId);
-      if (onDeletedQuestion || onDeletedSession) {
-        navigate('/home');
-      }
-
-      for (const sid of sessionIds) forgetSession(sid);
-      queryClient.removeQueries({ queryKey: ['question', questionId] });
-      for (const sid of sessionIds) {
-        queryClient.removeQueries({ queryKey: ['session', sid] });
-        queryClient.removeQueries({ queryKey: ['evals', sid] });
-        queryClient.removeQueries({ queryKey: ['snapshot', sid] });
-        queryClient.removeQueries({ queryKey: ['build-events', sid] });
-      }
-      queryClient.invalidateQueries({ queryKey: ['questions'] });
-      setDeletingQuestion(null);
-    },
-  });
+  const onLogout = () => {
+    clearAuth();
+    queryClient.clear();
+    setProfileOpen(false);
+    navigate('/login', { replace: true });
+  };
 
   return (
-    <div className="h-screen flex bg-white">
-      <aside
-        className={`shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col transition-[width] duration-150 ease-in-out ${
-          collapsed ? 'w-10' : 'w-72'
-        }`}
-      >
-        <div
-          className={`flex items-center ${
-            collapsed ? 'justify-center px-1' : 'justify-between px-4'
-          } pt-3 pb-2`}
+    <div className="flex h-screen flex-col bg-gray-50">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link to="/home" className="flex min-w-0 items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 via-cyan-500 to-emerald-400 text-sm font-bold text-white shadow-lg shadow-blue-100">
+              DC
+            </span>
+            <span className="truncate text-base font-semibold text-gray-950">
+              Design Coach
+            </span>
+          </Link>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-3">
+          {currentUser && (
+            <div ref={profileMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setProfileOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={profileOpen}
+                className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-gray-100"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold uppercase text-white">
+                  {(currentUser.displayName || currentUser.email).slice(0, 1)}
+                </div>
+                <div className="hidden min-w-0 text-left sm:block">
+                  <div className="truncate text-sm font-medium text-gray-950">
+                    {currentUser.displayName || currentUser.email}
+                  </div>
+                  <div className="truncate text-xs text-gray-500">{currentUser.email}</div>
+                </div>
+              </button>
+
+              {profileOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-30 mt-2 w-64 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl"
+                >
+                  <div className="bg-gradient-to-r from-gray-950 to-blue-900 px-4 py-4 text-white">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15 text-sm font-semibold uppercase ring-1 ring-white/25">
+                        {(currentUser.displayName || currentUser.email).slice(0, 1)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold">
+                          {currentUser.displayName || currentUser.email}
+                        </div>
+                        <div className="truncate text-xs text-blue-100">{currentUser.email}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <DailySpendBadge variant="menu" />
+                    <div className="mt-3 border-t border-gray-100 pt-3">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={onLogout}
+                        className="flex h-9 w-full items-center justify-center rounded-md bg-rose-50 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-100"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        <aside
+          className={`relative shrink-0 border-r border-gray-200 bg-white transition-[width] duration-150 ease-in-out ${
+            collapsed ? 'w-12' : 'w-60'
+          }`}
         >
-          {!collapsed && <h1 className="text-base font-semibold text-gray-900">Interview Assistant</h1>}
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800"
+            className={`absolute top-4 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:bg-gray-100 hover:text-gray-900 ${
+              collapsed ? '-right-4' : '-right-4'
+            }`}
           >
             <span aria-hidden="true">{collapsed ? '»' : '«'}</span>
           </button>
-        </div>
-        {collapsed ? (
-          <div className="flex-1 flex flex-col items-center pt-1">
+          <nav className="p-2">
             <Link
               to="/home"
-              title="New question"
-              aria-label="New question"
-              className="rounded bg-blue-600 text-white w-7 h-7 flex items-center justify-center text-sm font-bold hover:bg-blue-700"
+              title="Questions"
+              aria-label="Questions"
+              className={`flex h-9 items-center rounded-md text-sm font-medium transition-colors ${
+                collapsed ? 'justify-center px-0' : 'gap-2 px-3'
+              } ${
+                isQuestionsActive
+                  ? 'bg-gray-900 text-white'
+                  : 'text-gray-700 hover:bg-gray-100 hover:text-gray-950'
+              }`}
             >
-              +
-            </Link>
-          </div>
-        ) : (
-          <>
-            <div className="px-3 pb-2">
-              <Link
-                to="/home"
-                className="block w-full text-center rounded bg-blue-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-blue-700"
+              <span
+                aria-hidden="true"
+                className={`inline-flex h-5 w-5 items-center justify-center rounded text-xs font-semibold ${
+                  isQuestionsActive ? 'bg-white/15 text-white' : 'bg-gray-100 text-gray-700'
+                }`}
               >
-                + New question
-              </Link>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              <div className="text-xs uppercase tracking-wide text-gray-500 px-2 pt-1 pb-1">
-                Questions
-              </div>
-              {questionsQuery.isPending && (
-                <div className="text-xs text-gray-500 px-2 py-1">Loading…</div>
-              )}
-              {questionsQuery.data && questionsQuery.data.length === 0 && (
-                <div className="text-xs text-gray-500 px-2 py-1">No questions yet.</div>
-              )}
-              {questionsQuery.data?.map((q) => {
-                const isHighlighted = highlightQuestionId === q.id;
-                const attempts = q.sessions.length;
-                const completedAttempts = q.sessions.filter((s) => s.status === 'completed');
-                const bestPlanScore = completedAttempts
-                  .map((s) =>
-                    s.phaseEvaluations
-                      .filter((e) => e.phase === 'plan')
-                      .map((e) => Number(e.score))
-                      .find((n) => Number.isFinite(n)),
-                  )
-                  .filter((n): n is number => n !== undefined && Number.isFinite(n))
-                  .reduce<number | null>(
-                    (best, n) => (best === null || n > best ? n : best),
-                    null,
-                  );
+                Q
+              </span>
+              {!collapsed && <span>Questions</span>}
+            </Link>
+          </nav>
+        </aside>
 
-                return (
-                  <div
-                    key={q.id}
-                    className={`group relative rounded transition-colors ${
-                      isHighlighted ? 'bg-blue-100' : 'hover:bg-gray-200'
-                    }`}
-                  >
-                    <Link
-                      to={`/questions/${q.id}`}
-                      className={`block px-2 py-1.5 pr-8 text-sm ${
-                        isHighlighted ? 'text-blue-900' : 'text-gray-900'
-                      }`}
-                    >
-                      <div className="line-clamp-2 leading-snug">{q.prompt}</div>
-                      <div className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-2">
-                        <span>{relativeTime(q.createdAt)}</span>
-                        <span>·</span>
-                        <span>
-                          {attempts} attempt{attempts === 1 ? '' : 's'}
-                        </span>
-                        {bestPlanScore !== null && (
-                          <>
-                            <span>·</span>
-                            <span className="text-emerald-700">
-                              best {bestPlanScore.toFixed(2)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (deleteMutation.isPending) return;
-                        setDeletingQuestion(q);
-                      }}
-                      title="Delete this question and every attempt of it"
-                      aria-label={`Delete question: ${q.prompt.slice(0, 40)}`}
-                      className="absolute right-1 top-1.5 rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-rose-100 hover:text-rose-700 focus:opacity-100 group-hover:opacity-100 disabled:opacity-30"
-                      disabled={deleteMutation.isPending}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                );
-              })}
-              {questionsQuery.isError && (
-                <div className="text-xs text-red-600 px-2 py-1">
-                  Failed to load questions: {extractApiError(questionsQuery.error)}
-                </div>
-              )}
-            </div>
-            <DailySpendBadge />
-            {currentUser && (
-              <div className="border-t border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
-                <span
-                  className="text-xs text-gray-600 truncate flex-1"
-                  title={currentUser.email}
-                >
-                  {currentUser.email}
-                </span>
-                <div className="shrink-0 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={onLogout}
-                    className="text-xs text-gray-500 hover:text-gray-900 underline"
-                  >
-                    Sign out
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingDeleteAccount(true)}
-                    className="text-xs text-rose-600 hover:text-rose-800 underline"
-                    title="Permanently disable your account"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </aside>
-      <main className="flex-1 overflow-y-auto px-4 pt-2 pb-4">
-        <Outlet />
-      </main>
-      {deletingQuestion && (
-        <ConfirmDeleteQuestionDialog
-          question={deletingQuestion}
-          isPending={deleteMutation.isPending}
-          error={deleteMutation.isError ? extractApiError(deleteMutation.error) : null}
-          onConfirm={() => deleteMutation.mutate(deletingQuestion.id)}
-          onDismiss={() => {
-            if (deleteMutation.isPending) return;
-            deleteMutation.reset();
-            setDeletingQuestion(null);
-          }}
-        />
-      )}
-      {confirmingDeleteAccount && (
-        <ConfirmDeleteAccountDialog
-          email={currentUser?.email ?? ''}
-          isPending={deleteAccountMutation.isPending}
-          error={
-            deleteAccountMutation.isError
-              ? extractApiError(deleteAccountMutation.error)
-              : null
-          }
-          onConfirm={() => deleteAccountMutation.mutate()}
-          onDismiss={() => {
-            if (deleteAccountMutation.isPending) return;
-            deleteAccountMutation.reset();
-            setConfirmingDeleteAccount(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-    </svg>
-  );
-}
-
-function ConfirmDeleteQuestionDialog({
-  question,
-  isPending,
-  error,
-  onConfirm,
-  onDismiss,
-}: {
-  question: QuestionWithSessions;
-  isPending: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onDismiss: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isPending) return;
-      if (e.key === 'Escape') onDismiss();
-      if (e.key === 'Enter') onConfirm();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onConfirm, onDismiss, isPending]);
-
-  const attemptCount = question.sessions.length;
-  const attemptLabel = attemptCount === 1 ? 'attempt' : 'attempts';
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      role="dialog"
-      aria-modal="true"
-      onClick={isPending ? undefined : onDismiss}
-    >
-      <div
-        className="w-full max-w-md rounded-lg bg-white shadow-xl border border-rose-200"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 pt-4 pb-2">
-          <h2 className="text-base font-semibold text-rose-900">
-            Delete this question?
-          </h2>
-          <p className="mt-1 text-xs text-gray-500 line-clamp-2 italic">
-            "{question.prompt}"
-          </p>
-          <p className="mt-2 text-sm text-gray-700">
-            This removes the question and{' '}
-            <strong>
-              all {attemptCount} {attemptLabel}
-            </strong>{' '}
-            of it — every plan.md snapshot, build event log, captured Claude
-            Code turns, plan + build evaluations, and mentor +
-            signal-mentor artifacts across every attempt. Not reversible.
-          </p>
-          <p className="mt-2 text-[11px] text-gray-500">
-            On-disk prompt + response files are cleaned up in the background.
-          </p>
-        </div>
-        {error && (
-          <div className="mx-5 mb-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-            Couldn't delete: {error}
-          </div>
-        )}
-        <div className="flex justify-end gap-2 px-5 py-3 bg-gray-50 rounded-b-lg">
-          <button
-            type="button"
-            onClick={onDismiss}
-            disabled={isPending}
-            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            autoFocus
-            disabled={isPending}
-            className="rounded bg-rose-700 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isPending ? 'Deleting…' : `Delete question + ${attemptCount} ${attemptLabel}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ConfirmDeleteAccountDialog({
-  email,
-  isPending,
-  error,
-  onConfirm,
-  onDismiss,
-}: {
-  email: string;
-  isPending: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onDismiss: () => void;
-}) {
-  // Require the user to type their email to confirm — guards against
-  // accidental clicks; standard pattern for destructive account flows.
-  const [typed, setTyped] = useState('');
-  const matches = typed.trim().toLowerCase() === email.trim().toLowerCase();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isPending) return;
-      if (e.key === 'Escape') onDismiss();
-      // Enter does NOT confirm here — too easy to mis-fire on a
-      // destructive irreversible action while typing the email.
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onDismiss, isPending]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      role="dialog"
-      aria-modal="true"
-      onClick={isPending ? undefined : onDismiss}
-    >
-      <div
-        className="w-full max-w-md rounded-lg bg-white shadow-xl border border-rose-300"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 pt-4 pb-3">
-          <h2 className="text-base font-semibold text-rose-900">
-            Delete your account?
-          </h2>
-          <p className="mt-2 text-sm text-gray-700">
-            This signs you out and disables your account immediately. Your past
-            questions, sessions, and evaluations stay in the database but become
-            unreachable through this UI. The email{' '}
-            <strong className="font-medium text-gray-900">{email}</strong> can't
-            be used to sign up again.
-          </p>
-          <label className="mt-3 block">
-            <span className="text-xs text-gray-700">
-              Type your email to confirm:
-            </span>
-            <input
-              type="text"
-              autoFocus
-              autoComplete="off"
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              disabled={isPending}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-rose-500 focus:ring focus:ring-rose-200 focus:ring-opacity-50"
-            />
-          </label>
-        </div>
-        {error && (
-          <div className="mx-5 mb-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-            Couldn't delete: {error}
-          </div>
-        )}
-        <div className="flex justify-end gap-2 px-5 py-3 bg-gray-50 rounded-b-lg">
-          <button
-            type="button"
-            onClick={onDismiss}
-            disabled={isPending}
-            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isPending || !matches}
-            className="rounded bg-rose-700 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-800 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isPending ? 'Deleting…' : 'Delete my account'}
-          </button>
-        </div>
+        <main className="flex-1 overflow-y-auto px-4 py-4">
+          <Outlet />
+        </main>
       </div>
     </div>
   );

@@ -21,18 +21,25 @@ process.on('uncaughtException', (err) => {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
+  const corsOrigins = (
+    config.get<string>('CORS_ORIGIN') ??
+    'http://localhost:5173,http://127.0.0.1:5173'
+  )
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
   );
   app.useGlobalFilters(new AllExceptionsFilter());
-  app.enableCors({ origin: config.get<string>('CORS_ORIGIN') ?? 'http://localhost:5173' });
+  app.enableCors({ origin: corsOrigins });
 
   app.enableShutdownHooks(['SIGINT', 'SIGTERM']);
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Interview Assistant API')
+    .setTitle('Design Coach API')
     .setDescription(
       'REST endpoints for the practice-and-feedback interview tool. Sessions, snapshots, hints, evaluations, and the two post-eval coaching layers (mentor + signal-mentor).',
     )

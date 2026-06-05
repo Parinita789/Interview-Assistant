@@ -241,14 +241,27 @@ export function SessionResultsPage() {
   const session = sessionQuery.data;
   const planMd =
     (snapshotQuery.data?.artifacts as { planMd?: string | null } | null)?.planMd ?? null;
+  const displayedScore = displayedEval?.score ?? session.overallScore;
+  const displayedVerdict =
+    displayedScore === null || displayedScore === undefined
+      ? null
+      : scoreVerdict(displayedScore);
+  const scorePercent =
+    displayedScore === null || displayedScore === undefined
+      ? 0
+      : Math.max(0, Math.min(100, (Number(displayedScore) / 5) * 100));
 
   return (
-    <div className="max-w-5xl mx-auto space-y-3">
-      <header className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-xl font-semibold">Session results</h2>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
+      <div className="flex flex-col gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <Link
+          to={questionId ? `/questions/${questionId}` : '/home'}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900"
+        >
+          <span aria-hidden="true">←</span>
+          Back to question
+        </Link>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <RetryButton
             currentSeniority={session.seniority ?? null}
             isPending={retryMutation.isPending}
@@ -269,16 +282,77 @@ export function SessionResultsPage() {
             {deleteMutation.isPending ? 'Deleting…' : 'Delete attempt'}
           </button>
         </div>
-      </header>
+      </div>
+
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="bg-gradient-to-r from-gray-950 via-blue-900 to-violet-900 px-5 py-5 text-white">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="max-w-4xl whitespace-pre-wrap text-base font-medium leading-7 text-blue-50">
+              {session.question.prompt}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-blue-100">
+                {session.status}
+              </span>
+              {session.seniority && (
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-blue-100">
+                  {session.seniority}
+                </span>
+              )}
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+                {evalsQuery.data?.length ?? 0} eval{(evalsQuery.data?.length ?? 0) === 1 ? '' : 's'}
+              </span>
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+                {planMd ? planMd.length : 0} plan chars
+              </span>
+              {session.endedAt && (
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+                  ended {new Date(session.endedAt).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="w-full shrink-0 rounded-lg bg-white/10 px-4 py-3 ring-1 ring-white/15 sm:w-48">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-blue-100">
+                Score
+              </div>
+              {displayedVerdict && (
+                <span
+                  className={`inline-block rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${displayedVerdict.className}`}
+                >
+                  {displayedVerdict.label}
+                </span>
+              )}
+            </div>
+            <div className="mt-3 flex items-end gap-2">
+              <span className="text-4xl font-semibold leading-none tabular-nums">
+                {displayedScore === null || displayedScore === undefined
+                  ? '—'
+                  : formatScore(displayedScore)}
+              </span>
+              <span className="pb-1 text-sm text-blue-100">/ 5</span>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-300 to-emerald-300"
+                style={{ width: `${scorePercent}%` }}
+              />
+            </div>
+          </div>
+          </div>
+        </div>
+      </section>
 
       {retryMutation.isError && (
-        <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           Couldn't start a new attempt: {extractApiError(retryMutation.error)}
         </div>
       )}
 
       {reEvalMutation.isError && (
-        <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           Re-evaluation failed: {extractApiError(reEvalMutation.error)}
         </div>
       )}
@@ -304,21 +378,6 @@ export function SessionResultsPage() {
             onSelectEval={setSelectedEvalId}
           />
         </CollapsibleSection>
-      )}
-
-      <section>
-        <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
-          Question
-        </h3>
-        <div className="rounded border border-gray-300 bg-gray-50 px-3 py-2 text-sm whitespace-pre-wrap font-mono">
-          {session.question.prompt}
-        </div>
-      </section>
-
-      {reEvalMutation.isError && (
-        <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          Re-evaluation failed: {extractApiError(reEvalMutation.error)}
-        </div>
       )}
 
       {!displayedEval ? (
@@ -358,16 +417,24 @@ export function SessionResultsPage() {
         </section>
       )}
 
-      <section>
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         <button
           type="button"
           onClick={() => setPlanMdExpanded((v) => !v)}
-          className="text-sm font-medium text-gray-700 hover:text-gray-900"
+          className="flex w-full items-center justify-between border-b border-gray-100 bg-gray-50/80 px-4 py-3 text-left text-sm font-semibold text-gray-950 hover:bg-gray-50"
         >
-          {planMdExpanded ? '▼' : '▶'} plan.md ({planMd ? planMd.length : 0} chars)
+          <span className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+              {planMdExpanded ? '⌄' : '›'}
+            </span>
+            plan.md
+          </span>
+          <span className="text-xs font-medium text-gray-500">
+            {planMd ? planMd.length : 0} chars
+          </span>
         </button>
         {planMdExpanded && (
-          <div className="mt-2 rounded border border-gray-300 bg-white p-3 overflow-x-auto">
+          <div className="overflow-x-auto p-4">
             {planMd ? (
               <MarkdownView markdown={planMd} />
             ) : (
@@ -514,45 +581,57 @@ function PlanEvaluationView({
 
   return (
     <>
-      <section className="rounded border border-gray-300 bg-white px-4 py-3 flex items-center gap-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-xs uppercase tracking-wide text-gray-500">{phaseLabel} score</span>
-          <span className="text-3xl font-semibold tabular-nums leading-none">
-            {formatScore(evaluation.score)}
-            <span className="text-sm text-gray-400 font-normal"> / 5</span>
-          </span>
-          {(() => {
-            const verdict = scoreVerdict(evaluation.score);
-            return (
-              <span
-                className={`inline-block rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${verdict.className}`}
-              >
-                {verdict.label}
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-gray-100 bg-gray-50/80 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+              {phaseLabel} score
+            </div>
+            <div className="mt-1 flex items-end gap-2">
+              <span className="text-4xl font-semibold tabular-nums leading-none text-gray-950">
+                {formatScore(evaluation.score)}
               </span>
-            );
-          })()}
-          <span className="text-[11px] text-gray-500">
-            · Evaluated {new Date(evaluation.evaluatedAt).toLocaleString()}
-          </span>
+              <span className="pb-1 text-sm text-gray-400">/ 5</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            {(() => {
+              const verdict = scoreVerdict(evaluation.score);
+              return (
+                <span
+                  className={`inline-block rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${verdict.className}`}
+                >
+                  {verdict.label}
+                </span>
+              );
+            })()}
+            <span className="text-[11px] text-gray-500">
+              Evaluated {new Date(evaluation.evaluatedAt).toLocaleString()}
+            </span>
+          </div>
           {!isLatest && (
-            <span className="flex items-baseline gap-1.5">
-              <span className="rounded bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+            <span className="flex items-center gap-1.5">
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-amber-300">
                 historical
               </span>
               <button
                 type="button"
                 onClick={onShowLatest}
-                className="text-[11px] text-blue-600 hover:underline"
+                className="text-[11px] font-medium text-blue-600 hover:underline"
               >
                 show latest →
               </button>
             </span>
           )}
         </div>
+        <div className="flex flex-wrap items-center gap-3">
         {rubric && (
           <CoverageSummary signals={rubric.signals} results={evaluation.signalResults} />
         )}
         <AuditTrailButton evaluationId={evaluation.id} />
+        </div>
+        </div>
       </section>
 
       {rubric && <ScoreBreakdown rubric={rubric} evaluation={evaluation} />}
@@ -617,14 +696,22 @@ function PlanEvaluationView({
             )}
 
             {evaluation.topActionableItems.length > 0 && (
-              <section>
-                <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
-                  Recommended {phaseLabel.toLowerCase()} improvements
-                </h3>
-                <ol className="rounded border border-gray-300 bg-white p-3 text-sm space-y-1 list-decimal list-inside">
+              <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50/80 px-4 py-3">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                    ↗
+                  </span>
+                  <h3 className="text-sm font-semibold text-gray-950">
+                    Recommended {phaseLabel.toLowerCase()} improvements
+                  </h3>
+                </div>
+                <ol className="space-y-2 p-4 text-sm">
                   {evaluation.topActionableItems.map((item, i) => (
-                    <li key={i} className="pl-1">
-                      {item}
+                    <li key={i} className="flex gap-3 rounded-md border border-gray-100 bg-gray-50 px-3 py-2">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-semibold tabular-nums text-emerald-800">
+                        {i + 1}
+                      </span>
+                      <span className="leading-6 text-gray-800">{item}</span>
                     </li>
                   ))}
                 </ol>
@@ -664,18 +751,31 @@ function PlanEvaluationView({
             signalAnnotationsLoading={signalAnnotationsLoading}
           />
           {extraSignalIds.length > 0 && (
-            <section>
-              <h3 className="text-xs font-medium text-purple-700 uppercase tracking-wide mb-2">
-                Extra signals returned by the LLM ({extraSignalIds.length}) — not in this rubric
-              </h3>
-              <div className="rounded border border-purple-200 bg-purple-50/30 divide-y divide-purple-100">
+            <section className="overflow-hidden rounded-lg border border-purple-200 bg-white shadow-sm">
+              <div className="border-b border-purple-100 bg-purple-50/80 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-purple-100 text-purple-700">
+                      ?
+                    </span>
+                    <h3 className="text-sm font-semibold text-gray-950">Extra LLM signals</h3>
+                  </div>
+                  <span className="rounded-full border border-purple-200 bg-white px-2 py-0.5 text-xs font-semibold text-purple-700">
+                    {extraSignalIds.length}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-purple-700">
+                  Returned by the model but not part of this rubric; shown for transparency only.
+                </p>
+              </div>
+              <div className="divide-y divide-purple-100">
                 {extraSignalIds.map((id) => {
                   const sig = evaluation.signalResults[id];
                   const style = RESULT_STYLES[sig.result];
                   return (
-                    <div key={id} className="px-3 py-2 flex items-start gap-3">
+                    <div key={id} className="flex items-start gap-3 px-4 py-3">
                       <span
-                        className={`shrink-0 mt-0.5 inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium tracking-wide ${style.className}`}
+                        className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide ${style.className}`}
                       >
                         {style.label}
                       </span>
@@ -691,10 +791,6 @@ function PlanEvaluationView({
                   );
                 })}
               </div>
-              <p className="text-[11px] text-gray-500 mt-1 italic">
-                Smaller LLMs occasionally invent signal IDs. These are shown for transparency
-                but did not contribute to scoring against the rubric.
-              </p>
             </section>
           )}
         </>
@@ -710,9 +806,9 @@ function DetailsPendingSkeleton({ lines }: { lines: number }) {
   // that just has no data.
   const widths = ['w-11/12', 'w-10/12', 'w-9/12', 'w-8/12', 'w-7/12'];
   return (
-    <div className="rounded border border-gray-200 bg-white p-3 text-sm">
-      <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-2">
-        <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+    <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm">
+      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-blue-800">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
         Generating evidence + feedback…
       </div>
       <div className="space-y-2">
@@ -734,25 +830,28 @@ function GapTopicsSection({ topics }: { topics: GapTopic[] }) {
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join(' ');
   return (
-    <section>
-      <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">
-        Topics to study
-      </h3>
-      <p className="text-[11px] text-gray-500 mb-2">
-        Topics this question expected that you either missed or only
-        lightly touched. The future study feature aggregates these
-        across sessions.
-      </p>
-      <ul className="rounded border border-gray-300 bg-white divide-y divide-gray-100 text-sm">
+    <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+      <div className="border-b border-gray-100 bg-gray-50/80 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+            !
+          </span>
+          <h3 className="text-sm font-semibold text-gray-950">Topics to study</h3>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Expected areas that were missed or only lightly covered.
+        </p>
+      </div>
+      <ul className="divide-y divide-gray-100 text-sm">
         {topics.map((t, i) => {
           const tag =
             t.coverage === 'missed'
               ? { label: 'MISSED', cls: 'bg-rose-100 text-rose-800 border-rose-300' }
               : { label: 'LIGHT', cls: 'bg-amber-100 text-amber-800 border-amber-300' };
           return (
-            <li key={`${t.name}-${i}`} className="px-3 py-2 flex items-start gap-3">
+            <li key={`${t.name}-${i}`} className="flex items-start gap-3 px-4 py-3">
               <span
-                className={`shrink-0 inline-block rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tag.cls}`}
+                className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tag.cls}`}
               >
                 {tag.label}
               </span>
@@ -817,23 +916,55 @@ function SignalGroup({
       }),
     [signals, weightValues],
   );
+  const isGoodGroup = title.toLowerCase().includes('good');
+  const sectionTone = isGoodGroup
+    ? {
+        icon: '✓',
+        iconClass: 'bg-emerald-100 text-emerald-700',
+        borderClass: 'border-emerald-200',
+        headerClass: 'bg-emerald-50/80 border-emerald-100',
+      }
+    : {
+        icon: '!',
+        iconClass: 'bg-rose-100 text-rose-700',
+        borderClass: 'border-rose-200',
+        headerClass: 'bg-rose-50/80 border-rose-100',
+      };
+
   return (
-    <section>
+    <section className={`overflow-hidden rounded-lg border bg-white shadow-sm ${sectionTone.borderClass}`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="w-full flex items-center justify-between gap-2 rounded border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 uppercase tracking-wide hover:bg-gray-50"
+        className={`flex w-full items-center justify-between gap-3 border-b px-4 py-3 text-left ${sectionTone.headerClass}`}
       >
-        <span>
-          {open ? '▼' : '▶'} {title}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${sectionTone.iconClass}`}>
+            {sectionTone.icon}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-gray-950">
+              {isGoodGroup ? 'Good signals' : 'Bad signals'}
+            </span>
+            <span className="mt-0.5 block text-xs font-normal normal-case text-gray-500">
+              {isGoodGroup
+                ? 'Presence improves the result.'
+                : 'Presence hurts the result; critical signals can cap the score.'}
+            </span>
+          </span>
         </span>
-        <span className="text-[11px] font-normal normal-case text-gray-500">
-          {signals.length} {signals.length === 1 ? 'signal' : 'signals'}
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs font-semibold text-gray-700">
+            {signals.length}
+          </span>
+          <span className="text-sm text-gray-500" aria-hidden="true">
+            {open ? '⌄' : '›'}
+          </span>
         </span>
       </button>
       {open && (
-        <div className="mt-2 rounded border border-gray-200 divide-y divide-gray-200 bg-white">
+        <div className="divide-y divide-gray-100 bg-white">
           {sorted.map((s) => (
             <SignalRow
               key={s.id}
@@ -867,9 +998,9 @@ function SignalRow({
     (signal.polarity === 'bad' && (kind === 'hit' || kind === 'partial'));
   const showCoachLoader = isGap && !mentorAnnotation && annotationsLoading;
   return (
-    <div className="px-3 py-2 flex items-start gap-3">
+    <div className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50/70">
       <span
-        className={`shrink-0 mt-0.5 inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium tracking-wide whitespace-nowrap ${resultStyle.className}`}
+        className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold tracking-wide whitespace-nowrap ${resultStyle.className}`}
       >
         {resultStyle.label}
       </span>
@@ -892,9 +1023,9 @@ function SignalRow({
             </span>
           )}
         </div>
-        <div className="text-xs text-gray-700 mt-0.5">{signal.description}</div>
+        <div className="mt-1 text-xs leading-5 text-gray-700">{signal.description}</div>
         {llmResult?.evidence && (
-          <div className="text-xs text-gray-600 mt-1 italic whitespace-pre-wrap border-l-2 border-gray-200 pl-2">
+          <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600 whitespace-pre-wrap">
             {llmResult.evidence}
           </div>
         )}
@@ -904,7 +1035,7 @@ function SignalRow({
           </div>
         )}
         {mentorAnnotation && (
-          <div className="mt-2 rounded border-l-2 border-indigo-300 bg-indigo-50/40 px-2 py-1.5">
+          <div className="mt-2 rounded-md border border-indigo-100 bg-indigo-50/60 px-3 py-2">
             <div className="flex items-center gap-1 mb-0.5">
               <CoachBadge />
             </div>
@@ -1796,11 +1927,14 @@ function DeepDiveDisclosure({
         : 'Read the deep-dive feedback';
 
   return (
-    <section>
-      <div className="flex items-baseline justify-between mb-1 gap-3 flex-wrap">
-        <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide">
-          Feedback
-        </h3>
+    <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 bg-gray-50/80 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+            ✦
+          </span>
+          <h3 className="text-sm font-semibold text-gray-950">Mentor feedback</h3>
+        </div>
         {audit && (
           <div className="flex items-center gap-3 text-[11px]">
             <span className="text-gray-500">
@@ -1820,25 +1954,32 @@ function DeepDiveDisclosure({
         )}
       </div>
 
-      <div className="rounded border border-gray-300 bg-white p-3 text-sm whitespace-pre-wrap">
-        {feedbackText}
-      </div>
+      <div className="p-4">
+        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm leading-6 text-gray-800 whitespace-pre-wrap">
+          {feedbackText}
+        </div>
 
       {/* Prominent disclosure button. Solid bg, centered, with a subtle
           ring-pulse when freshly available so the user notices a new
           deep-dive landed. */}
-      <div className="mt-3 flex items-center justify-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-3">
+        <div>
+          <div className="text-sm font-semibold text-gray-950">Deep-dive review</div>
+          <div className="mt-0.5 text-xs text-gray-500">
+            Expanded coaching, examples, and next-step guidance.
+          </div>
+        </div>
         <button
           type="button"
           onClick={handleClick}
           disabled={generateMutation.isPending}
           aria-expanded={expanded}
           aria-controls="deep-dive-panel"
-          className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold shadow-sm transition-all ${
+          className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold shadow-sm transition-all ${
             expanded
               ? 'bg-indigo-100 text-indigo-900 ring-1 ring-indigo-300 hover:bg-indigo-200'
               : artifact
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-md ring-2 ring-indigo-200 ring-offset-2 ring-offset-white'
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
                 : 'bg-gray-200 text-gray-700 cursor-wait'
           }`}
           title={
@@ -1866,7 +2007,7 @@ function DeepDiveDisclosure({
           <button
             type="button"
             onClick={cancelGenerate}
-            className="rounded-full px-4 py-2 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+            className="h-9 rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-100"
             title="Abort the in-flight mentor generation"
           >
             Cancel
@@ -1875,7 +2016,7 @@ function DeepDiveDisclosure({
       </div>
 
       {generateMutation.isError && !wasCancelled && (
-        <div className="mt-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           Mentor generation failed: {extractApiError(generateMutation.error)}
         </div>
       )}
@@ -1885,11 +2026,12 @@ function DeepDiveDisclosure({
           id="deep-dive-panel"
           ref={deepDiveRef}
           tabIndex={-1}
-          className="mt-3 rounded border border-indigo-200 border-l-4 border-l-indigo-500 bg-white p-4 shadow-sm scroll-mt-4"
+          className="mt-4 scroll-mt-4 rounded-lg border border-indigo-200 bg-indigo-50/40 p-4 shadow-sm"
         >
           <MentorArtifactView artifact={artifact} />
         </div>
       )}
+      </div>
     </section>
   );
 }
