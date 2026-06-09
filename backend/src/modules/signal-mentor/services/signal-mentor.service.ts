@@ -5,15 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OnEvent } from '@nestjs/event-emitter';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { safeJoinUnderBase } from '../../../common/paths/safe-join';
-import { BackgroundTaskTracker } from '../../../common/background-task-tracker.service';
-import { EvaluationCompletedEvent } from '../../../common/events/evaluation-events';
 import { EvaluationsRepository } from '../../evaluations/repositories/evaluations.repository';
 import { RubricLoaderService } from '../../evaluations/services/rubric-loader.service';
 import { BuildContextService } from '../../evaluations/services/build-context.service';
+import { FeedbackService } from '../../dashboard/services/feedback.service';
 import { gapSignalIds } from '../../evaluations/helpers/gap-signals';
 import { SessionReadService } from '../../session-read/services/session-read.service';
 import { SnapshotsService } from '../../snapshots/services/snapshots.service';
@@ -40,16 +38,8 @@ export class SignalMentorService {
     private readonly snapshotsService: SnapshotsService,
     private readonly buildContextSvc: BuildContextService,
     private readonly config: ConfigService,
-    private readonly tasks: BackgroundTaskTracker,
+    private readonly feedbackService: FeedbackService,
   ) {}
-
-  @OnEvent(EvaluationCompletedEvent.eventName)
-  handleEvaluationCompleted(event: EvaluationCompletedEvent): void {
-    this.tasks.track(
-      this.generate(event.evaluationId, event.model),
-      `signalMentor.generate(${event.evaluationId})`,
-    );
-  }
 
   async generate(evaluationId: string, model?: string) {
     const evalRow = await this.evalRepo.findById(evaluationId);
@@ -91,6 +81,7 @@ export class SignalMentorService {
           latencyMs: 0,
         },
       });
+      await this.feedbackService.noteSignalMentorArtifactChanged(session.userId);
       return SignalMentorRepository.toApiShape(row);
     }
 
@@ -139,6 +130,7 @@ export class SignalMentorService {
     }
 
     const row = await this.repo.upsertByEvaluationId(evaluationId, result);
+    await this.feedbackService.noteSignalMentorArtifactChanged(session.userId);
 
     await this.writeToDisk(evalRow.sessionId, evaluationId, result).catch((err) => {
       this.logger.warn(

@@ -21,7 +21,7 @@ export class EvaluationsController {
   @ApiOperation({
     summary: 'Re-run the plan-phase evaluation for a session',
     description:
-      'Loads the rubric, evaluates plan.md via the LLM with tool-use forcing, validates evidence, computes a deterministic score, persists a new evaluation row + audit, and fires deep-dive + per-signal mentor in the background. Optional model override.',
+      'Queues plan/build evaluation work and returns immediately. Clients poll evaluations/status for progress. Optional model override.',
   })
   async runForSession(
     @Param('sessionId', ParseUUIDPipe) sessionId: string,
@@ -29,7 +29,7 @@ export class EvaluationsController {
     @Body() body?: RunEvaluationDto,
   ) {
     await this.ownership.assertOwnsSession(sessionId, user.id);
-    return this.evaluationsService.runForSession(sessionId, body?.model);
+    return this.evaluationsService.enqueueForSession(sessionId, body?.model);
   }
 
   @Get('sessions/:sessionId/evaluations')
@@ -45,14 +45,35 @@ export class EvaluationsController {
     return this.evaluationsService.getBySession(sessionId);
   }
 
+  @Get('sessions/:sessionId/evaluation-jobs')
+  @ApiOperation({ summary: 'List queued evaluation jobs for a session, newest first' })
+  async listJobsForSession(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    await this.ownership.assertOwnsSession(sessionId, user.id);
+    return this.evaluationsService.getJobsForSession(sessionId);
+  }
+
   @Get('evaluations/:id/status')
-  @ApiOperation({ summary: 'Evaluation status (always complete in the synchronous flow)' })
+  @ApiOperation({ summary: 'Evaluation status, including async details state' })
   async status(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     await this.ownership.assertOwnsEvaluation(id, user.id);
-    return { state: 'complete' as const };
+    return this.evaluationsService.getStatus(id);
+  }
+
+  @Get('evaluation-jobs/:jobId/status')
+  @ApiOperation({ summary: 'Queued evaluation job status' })
+  async jobStatus(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const row = await this.evaluationsService.getJobStatus(jobId);
+    await this.ownership.assertOwnsSession(row.sessionId, user.id);
+    return row;
   }
 
   @Get('evaluations/:id')

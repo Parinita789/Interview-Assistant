@@ -24,6 +24,7 @@ import {
 } from '../../../common/events/evaluation-events';
 import { computeFingerprint } from '../helpers/compute-fingerprint';
 import { AGENTS_CONFIG } from '../../../config/llm-tunables.config';
+import { EvaluationQueueService } from '../../evaluation-queue/services/evaluation-queue.service';
 
 // Prisma surfaces unique-constraint violations as `PrismaClientKnownRequestError`
 // with `code: 'P2002'`. We avoid `instanceof Prisma.PrismaClientKnownRequestError`
@@ -51,7 +52,8 @@ export class OrchestratorService {
     private readonly evalsRepo: EvaluationsRepository,
     private readonly config: ConfigService,
     private readonly buildContextSvc: BuildContextService,
-    private readonly tasks: BackgroundTaskTracker,
+    private readonly _tasks: BackgroundTaskTracker,
+    private readonly queue: EvaluationQueueService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -111,10 +113,9 @@ export class OrchestratorService {
 
       // Content-based cache check. Same shape across phases — same
       // inputs (plan.md + model + build artifacts) means same row.
-      // Mentor + signal-mentor are NOT re-fired on a cache hit; the
-      // first run already dispatched them and a second dispatch would
-      // duplicate work. Users who want fresh mentor output use the
-      // dedicated POST /mentor/:id endpoint.
+      // Cache hits skip the LLM call but still repair downstream queue
+      // fan-out. This matters when the original worker persisted the
+      // evaluation and then crashed before enqueueing follow-up jobs.
       const fingerprintModel = this.fingerprintModelFor(phase, options?.model);
       const fingerprint = computeFingerprint(phase, {
         planMd: phaseInput.planMd,
@@ -127,6 +128,7 @@ export class OrchestratorService {
           `Cache hit for ${phase} eval on session ${sessionId} ` +
             `(fingerprint=${fingerprint.slice(0, 12)}…) — skipping LLM run`,
         );
+        await this.enqueueCachedDownstream(cached, sessionId, options?.model);
         out.push(cached);
         continue;
       }
@@ -157,19 +159,20 @@ export class OrchestratorService {
 
     const persisted = await this.persistPlanCallA(sessionId, results, fingerprint);
 
-    // Signal-mentor fires now — it only needs per-signal verdicts.
     this.eventEmitter.emit(
       EvaluationCompletedEvent.eventName,
       new EvaluationCompletedEvent(persisted.id, sessionId, 'plan', overrideModel),
     );
-
-    // Call B in the background. Failures are caught inside
-    // evaluateDetailsAndPersist and stored on the row as detailsError
-    // so the frontend can render a banner instead of polling forever.
-    this.tasks.track(
-      this.evaluateDetailsAndPersist(persisted.id, sessionId, input, results.signalResults),
-      `plan.details(${sessionId})`,
-    );
+    await this.queue.enqueueSignalMentor({
+      evaluationId: persisted.id,
+      sessionId,
+      ...(overrideModel ? { model: overrideModel } : {}),
+    });
+    await this.queue.enqueuePlanDetails({
+      evaluationId: persisted.id,
+      sessionId,
+      ...(overrideModel ? { model: overrideModel } : {}),
+    });
 
     return persisted;
   }
@@ -211,14 +214,80 @@ export class OrchestratorService {
     }
   }
 
+  async runPlanDetailsForEvaluation(evaluationId: string, model?: string): Promise<void> {
+    const evalRow = await this.evalsRepo.findById(evaluationId);
+    if (!evalRow) throw new Error(`Evaluation ${evaluationId} not found`);
+    const session = await this.sessionReadService.getWithQuestion(evalRow.sessionId);
+    const [allSnapshots, hints] = await Promise.all([
+      this.snapshotsService.list(evalRow.sessionId),
+      this.aiInteractionsRepo.findBySession(evalRow.sessionId),
+    ]);
+    const latestSnapshot = allSnapshots[0];
+    const rubricVersion =
+      session.question.rubricVersion ??
+      this.config.get<string>('RUBRIC_VERSION') ??
+      'v3.0';
+    const planMd =
+      (latestSnapshot?.artifacts as { planMd?: string | null } | null)?.planMd ?? null;
+    const input: PhaseEvalInput = {
+      session: {
+        id: session.id,
+        prompt: session.question.prompt,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+      },
+      userId: session.userId,
+      planMd,
+      snapshots: allSnapshots.map((s) => ({
+        takenAt: s.takenAt,
+        elapsedMinutes: s.elapsedMinutes,
+        planMdSize:
+          ((s.artifacts as { planMd?: string | null } | null)?.planMd ?? '').length,
+      })),
+      hints: hints.map((h) => ({
+        occurredAt: h.occurredAt,
+        elapsedMinutes: h.elapsedMinutes,
+        prompt: h.prompt,
+        response: h.response,
+      })),
+      rubricVersion,
+      kind: session.question.kind ?? null,
+      seniority: session.seniority ?? null,
+      model,
+    };
+    await this.evaluateDetailsAndPersist(
+      evaluationId,
+      evalRow.sessionId,
+      input,
+      evalRow.signalResults as unknown as Record<string, SignalResult>,
+      model,
+    );
+  }
+
   private async evaluateDetailsAndPersist(
     evaluationId: string,
     sessionId: string,
     input: PhaseEvalInput,
     priorSignalResults: Record<string, SignalResult>,
+    model: string | undefined,
   ): Promise<void> {
+    const existing = await this.evalsRepo.findById(evaluationId);
+    if (existing?.detailsCompletedAt) {
+      await this.queue.enqueueMentor({
+        evaluationId,
+        sessionId,
+        ...(model ? { model } : {}),
+      });
+      this.eventEmitter.emit(
+        PlanEvalDetailsCompletedEvent.eventName,
+        new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, true),
+      );
+      return;
+    }
+
+    let details: Awaited<ReturnType<PlanAgent['evaluateDetails']>>;
     try {
-      const details = await this.planAgent.evaluateDetails(input, priorSignalResults);
+      details = await this.planAgent.evaluateDetails(input, priorSignalResults);
       await this.evalsRepo.patchDetails(evaluationId, {
         signalResults: details.signalResults,
         score: details.score,
@@ -227,14 +296,6 @@ export class OrchestratorService {
         gapTopics: details.gapTopics,
         detailsAudit: details.audit,
       });
-      this.eventEmitter.emit(
-        PlanEvalDetailsCompletedEvent.eventName,
-        new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, true),
-      );
-      this.logger.log(
-        `Plan Call B persisted for eval ${evaluationId} ` +
-          `(${details.downgradedSignalIds.length} signal(s) downgraded)`,
-      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(
@@ -252,11 +313,22 @@ export class OrchestratorService {
             (writeErr instanceof Error ? writeErr.message : String(writeErr)),
         );
       }
-      this.eventEmitter.emit(
-        PlanEvalDetailsCompletedEvent.eventName,
-        new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, false),
-      );
+      throw err;
     }
+
+    await this.queue.enqueueMentor({
+      evaluationId,
+      sessionId,
+      ...(model ? { model } : {}),
+    });
+    this.eventEmitter.emit(
+      PlanEvalDetailsCompletedEvent.eventName,
+      new PlanEvalDetailsCompletedEvent(evaluationId, sessionId, true),
+    );
+    this.logger.log(
+      `Plan Call B persisted for eval ${evaluationId} ` +
+        `(${details.downgradedSignalIds.length} signal(s) downgraded)`,
+    );
   }
 
   // Build keeps the single-call shape — same behavior as before. The
@@ -283,6 +355,16 @@ export class OrchestratorService {
         EvaluationCompletedEvent.eventName,
         new EvaluationCompletedEvent(persisted.id, sessionId, 'build', overrideModel),
       );
+      await this.queue.enqueueSignalMentor({
+        evaluationId: persisted.id,
+        sessionId,
+        ...(overrideModel ? { model: overrideModel } : {}),
+      });
+      await this.queue.enqueueMentor({
+        evaluationId: persisted.id,
+        sessionId,
+        ...(overrideModel ? { model: overrideModel } : {}),
+      });
       return persisted;
     } catch (err) {
       if (!isUniqueConstraintViolation(err)) throw err;
@@ -292,7 +374,39 @@ export class OrchestratorService {
         `Concurrent race on build eval for session ${sessionId} — ` +
           `duplicate LLM call paid, returning winner's row ${winner.id}.`,
       );
+      this.eventEmitter.emit(
+        EvaluationCompletedEvent.eventName,
+        new EvaluationCompletedEvent(winner.id, sessionId, 'build', overrideModel),
+      );
+      await this.enqueueCachedDownstream(winner, sessionId, overrideModel);
       return winner;
+    }
+  }
+
+  private async enqueueCachedDownstream(
+    cached: PhaseEvaluation,
+    sessionId: string,
+    model: string | undefined,
+  ): Promise<void> {
+    const payload = {
+      evaluationId: cached.id,
+      sessionId,
+      ...(model ? { model } : {}),
+    };
+
+    if (cached.phase === 'plan') {
+      await this.queue.enqueueSignalMentor(payload);
+      if (!cached.detailsCompletedAt && !cached.detailsError) {
+        await this.queue.enqueuePlanDetails(payload);
+      } else if (cached.detailsCompletedAt) {
+        await this.queue.enqueueMentor(payload);
+      }
+      return;
+    }
+
+    if (cached.phase === 'build') {
+      await this.queue.enqueueSignalMentor(payload);
+      await this.queue.enqueueMentor(payload);
     }
   }
 
@@ -310,10 +424,31 @@ export class OrchestratorService {
 
   @OnEvent(BuildEvalRequestedEvent.eventName)
   handleBuildEvalRequested(event: BuildEvalRequestedEvent): void {
-    this.tasks.track(
-      this.run(event.sessionId, ['build']),
-      `buildAgent.run(${event.sessionId})`,
-    );
+    this.enqueueBuildEval(event.sessionId).catch((err) => {
+      this.logger.error(
+        `Failed to enqueue build eval for session ${event.sessionId}: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    });
+  }
+
+  private async enqueueBuildEval(sessionId: string): Promise<void> {
+    const session = await this.sessionReadService.getWithQuestion(sessionId);
+    const latestSnapshot = await this.snapshotsService.latest(sessionId);
+    const planMd =
+      (latestSnapshot?.artifacts as { planMd?: string | null } | null)?.planMd ?? null;
+    const resolvedModel = this.fingerprintModelFor('build', undefined);
+    const buildContext = await this.buildContextSvc.load(sessionId, session);
+    const fingerprint = computeFingerprint('build', {
+      planMd,
+      model: resolvedModel,
+      buildContext,
+    });
+    await this.queue.enqueueBuildEvaluation({
+      sessionId,
+      resolvedModel,
+      fingerprint,
+    });
   }
 }
 

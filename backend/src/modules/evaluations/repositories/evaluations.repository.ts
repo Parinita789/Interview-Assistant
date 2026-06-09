@@ -114,6 +114,7 @@ export class EvaluationsRepository {
         gapTopics: patch.gapTopics as unknown as Prisma.InputJsonValue,
         detailsAudit: patch.detailsAudit as unknown as Prisma.InputJsonValue,
         detailsCompletedAt: new Date(),
+        detailsError: null,
       },
     });
   }

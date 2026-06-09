@@ -6,6 +6,9 @@ import { PrismaService } from '../../src/database/prisma.service';
 // CASCADE; foreign keys get cleared along with the parents.
 const TABLES = [
   'llm_spend',
+  'feedback_summaries',
+  'feedback_projection_state',
+  'evaluation_jobs',
   'evaluation_audits',
   'signal_mentor_artifacts',
   'mentor_artifacts',

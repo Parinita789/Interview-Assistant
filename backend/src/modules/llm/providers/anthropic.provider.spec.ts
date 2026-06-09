@@ -171,7 +171,7 @@ describe('AnthropicProvider', () => {
     expect(result.text).toBe('just prose');
   });
 
-  it('passes temperature through when set', async () => {
+  it('omits temperature even when set because newer Claude models reject it', async () => {
     client.createMessage.mockResolvedValue({
       content: [{ type: 'text', text: 'r' }],
       model: 'claude-opus-4-7',
@@ -180,7 +180,7 @@ describe('AnthropicProvider', () => {
 
     await provider.call([{ role: ChatRole.User, content: 'hi' }], { temperature: 0 });
 
-    expect(client.createMessage.mock.calls[0][0].temperature).toBe(0);
+    expect(client.createMessage.mock.calls[0][0].temperature).toBeUndefined();
   });
 
   it('omits temperature from the request when not set', async () => {

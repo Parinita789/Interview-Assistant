@@ -15,6 +15,7 @@ export interface EndSessionResult {
   session: RedactedSession;
   evaluations: PhaseEvaluation[];
   evalError: string | null;
+  evaluationJobs?: string[];
 }
 
 @Injectable()
@@ -72,8 +73,8 @@ export class SessionsService {
     }
 
     try {
-      const evaluations = await this.evaluationsService.runForSession(sessionId);
-      return { session: ended, evaluations, evalError: null };
+      const queued = await this.evaluationsService.enqueueForSession(sessionId);
+      return { session: ended, evaluations: [], evalError: null, evaluationJobs: queued.jobIds };
     } catch (err) {
       const message = (err as Error).message ?? String(err);
       this.logger.error(`Evaluation failed for ${sessionId}: ${message}`);

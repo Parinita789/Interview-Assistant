@@ -104,6 +104,7 @@ export class ClaudeCliClientService {
       let eventCount = 0;
       let finalEvent: ClaudeCliJsonEnvelope | null = null;
       const malformedLines: string[] = [];
+      const stdoutTailLines: string[] = [];
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -142,9 +143,14 @@ export class ClaudeCliClientService {
           // may still arrive. Stash for diagnostics; only fatal if
           // we close without ever seeing a result event.
           if (malformedLines.length < 5) malformedLines.push(trimmed.slice(0, 200));
+          pushTail(stdoutTailLines, `malformed:${trimmed.slice(0, 120)}`);
           return;
         }
         eventCount += 1;
+        pushTail(
+          stdoutTailLines,
+          `event:${event.type ?? 'unknown'}${event.subtype ? `/${event.subtype}` : ''}`,
+        );
         if (event.type === 'system' && event.subtype === 'init') {
           this.logger.log(
             `claude CLI stream: init (model=${event.model ?? '?'}, ` +
@@ -222,19 +228,26 @@ export class ClaudeCliClientService {
           );
           return;
         }
-        if (code !== 0) {
-          reject(
-            new Error(
-              `claude CLI exited with code ${code}: ${stderr.slice(0, 500) || '(empty stderr)'}`,
-            ),
-          );
-          return;
-        }
-
-        // Flush any trailing partial line that didn't end in \n.
+        // Flush any trailing partial line before interpreting exit
+        // status. On CLI failures, useful diagnostics are often
+        // emitted as stream-json stdout events rather than stderr.
         if (stdoutBuffer.length > 0) {
           handleLine(stdoutBuffer);
           stdoutBuffer = '';
+        }
+        if (code !== 0) {
+          reject(
+            new Error(
+              `claude CLI exited with code ${code}: ${formatCliFailure(
+                stderr,
+                finalEvent,
+                eventCount,
+                malformedLines,
+                stdoutTailLines,
+              )}`,
+            ),
+          );
+          return;
         }
 
         if (!finalEvent) {
@@ -276,6 +289,11 @@ export class ClaudeCliClientService {
   }
 }
 
+function pushTail(lines: string[], value: string): void {
+  lines.push(value);
+  if (lines.length > 5) lines.shift();
+}
+
 function pickActualModel(
   modelUsage: ClaudeCliJsonEnvelope['modelUsage'],
   explicit?: string,
@@ -293,4 +311,27 @@ function pickActualModel(
   }
   if (!bestKey) return 'claude-cli';
   return bestKey.replace(/\[.*?\]$/, '').replace(/-\d{8}$/, '');
+}
+
+function formatCliFailure(
+  stderr: string,
+  finalEvent: ClaudeCliJsonEnvelope | null,
+  eventCount: number,
+  malformedLines: string[],
+  stdoutTailLines: string[],
+): string {
+  const cleanStderr = stderr.trim();
+  if (cleanStderr) return cleanStderr.slice(0, 500);
+
+  if (finalEvent?.is_error) {
+    return `error envelope: ${(finalEvent.result || '(no message)').slice(0, 500)}`;
+  }
+
+  const malformed = malformedLines.length > 0
+    ? `malformed=${malformedLines.length}, first bad line=${malformedLines[0]}`
+    : 'malformed=0';
+  const tail = stdoutTailLines.length > 0
+    ? `stdout tail: ${stdoutTailLines.join(' | ').slice(0, 500)}`
+    : 'stdout tail: (empty)';
+  return `(empty stderr, events=${eventCount}, ${malformed}). ${tail}`;
 }

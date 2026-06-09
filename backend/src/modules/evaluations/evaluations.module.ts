@@ -18,6 +18,10 @@ import { SnapshotsModule } from '../snapshots/snapshots.module';
 import { HintsModule } from '../hints/hints.module';
 import { BuildSessionsDataModule } from '../build-sessions-data/build-sessions-data.module';
 import { AuthModule } from '../auth/auth.module';
+import { EvaluationQueueModule } from '../evaluation-queue/evaluation-queue.module';
+import { PlanScoreWorker } from './workers/plan-score.worker';
+import { PlanDetailsWorker } from './workers/plan-details.worker';
+import { BuildEvaluationWorker } from './workers/build-evaluation.worker';
 
 @Module({
   imports: [
@@ -28,6 +32,7 @@ import { AuthModule } from '../auth/auth.module';
     SessionReadModule,
     BuildSessionsDataModule,
     AuthModule,
+    EvaluationQueueModule,
   ],
   controllers: [EvaluationsController, RubricsController],
   providers: [
@@ -41,6 +46,9 @@ import { AuthModule } from '../auth/auth.module';
     ValidateAgent,
     WrapAgent,
     SynthesizerAgent,
+    PlanScoreWorker,
+    PlanDetailsWorker,
+    BuildEvaluationWorker,
   ],
   exports: [
     EvaluationsService,

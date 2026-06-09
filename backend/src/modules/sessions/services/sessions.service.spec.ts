@@ -18,6 +18,7 @@ describe('SessionsService', () => {
 
   const evaluations = {
     runForSession: jest.fn(),
+    enqueueForSession: jest.fn(),
   };
 
   const config = {
@@ -153,20 +154,25 @@ describe('SessionsService', () => {
   });
 
   describe('end', () => {
-    it('defaults to completed and runs the evaluator inline', async () => {
+    it('defaults to completed and queues the evaluator', async () => {
       repo.findById.mockResolvedValue({ id: 'sid-1', userId: UID });
       repo.markEnded.mockResolvedValue({ id: 'sid-1', status: SessionStatus.completed });
-      evaluations.runForSession.mockResolvedValue([{ id: 'eval-1', score: 3.5 }]);
+      evaluations.enqueueForSession.mockResolvedValue({
+        status: 'queued',
+        jobIds: ['job-1'],
+      });
 
       const result = await service.end('sid-1', UID, {});
 
       expect(ownership.assertOwnsSession).not.toHaveBeenCalled();
       expect(repo.markEnded).toHaveBeenCalledWith('sid-1', SessionStatus.completed);
-      expect(evaluations.runForSession).toHaveBeenCalledWith('sid-1');
+      expect(evaluations.enqueueForSession).toHaveBeenCalledWith('sid-1');
+      expect(evaluations.runForSession).not.toHaveBeenCalled();
       expect(result).toEqual({
         session: { id: 'sid-1', status: SessionStatus.completed },
-        evaluations: [{ id: 'eval-1', score: 3.5 }],
+        evaluations: [],
         evalError: null,
+        evaluationJobs: ['job-1'],
       });
     });
 
@@ -177,6 +183,7 @@ describe('SessionsService', () => {
       const result = await service.end('sid-1', UID, { status: 'abandoned' });
 
       expect(evaluations.runForSession).not.toHaveBeenCalled();
+      expect(evaluations.enqueueForSession).not.toHaveBeenCalled();
       expect(result).toEqual({
         session: { id: 'sid-1', status: SessionStatus.abandoned },
         evaluations: [],
@@ -187,12 +194,13 @@ describe('SessionsService', () => {
     it('still completes the session when evaluation throws — error surfaces in evalError', async () => {
       repo.findById.mockResolvedValue({ id: 'sid-1', userId: UID });
       repo.markEnded.mockResolvedValue({ id: 'sid-1', status: SessionStatus.completed });
-      evaluations.runForSession.mockRejectedValue(new Error('LLM unreachable'));
+      evaluations.enqueueForSession.mockRejectedValue(new Error('Redis unreachable'));
 
       const result = await service.end('sid-1', UID, {});
 
-      expect(result.evalError).toBe('LLM unreachable');
+      expect(result.evalError).toBe('Redis unreachable');
       expect(result.evaluations).toEqual([]);
+      expect(result.evaluationJobs).toBeUndefined();
     });
 
     it('throws NotFoundException when the session is missing', async () => {

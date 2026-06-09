@@ -46,7 +46,6 @@ export class AnthropicProvider implements LlmProvider {
       ...(systemParam !== undefined ? { system: systemParam } : {}),
       ...(toolsParam !== undefined ? { tools: toolsParam } : {}),
       ...(toolChoiceParam !== undefined ? { tool_choice: toolChoiceParam } : {}),
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     };
 
     const result = await this.client.createMessage(

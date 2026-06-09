@@ -5,19 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OnEvent } from '@nestjs/event-emitter';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { safeJoinUnderBase } from '../../../common/paths/safe-join';
-import { BackgroundTaskTracker } from '../../../common/background-task-tracker.service';
-import {
-  EvaluationCompletedEvent,
-  PlanEvalDetailsCompletedEvent,
-} from '../../../common/events/evaluation-events';
 import { EvaluationsRepository } from '../../evaluations/repositories/evaluations.repository';
 import { SessionReadService } from '../../session-read/services/session-read.service';
 import { SnapshotsService } from '../../snapshots/services/snapshots.service';
 import { BuildContextService } from '../../evaluations/services/build-context.service';
+import { FeedbackService } from '../../dashboard/services/feedback.service';
 import { SignalResult } from '../../evaluations/types/evaluation.types';
 import { Phase } from '../../phase-tagger/types/phase.types';
 import { MentorAgent } from '../agents/mentor.agent';
@@ -36,40 +31,8 @@ export class MentorService {
     private readonly snapshotsService: SnapshotsService,
     private readonly buildContextSvc: BuildContextService,
     private readonly config: ConfigService,
-    private readonly tasks: BackgroundTaskTracker,
+    private readonly feedbackService: FeedbackService,
   ) {}
-
-  // For BUILD phase only. EvaluationCompletedEvent for the plan phase
-  // fires after Call A of the two-call split — feedbackText is still
-  // empty at that point, so the deep-dive mentor would generate from
-  // an empty narrative. We listen for PlanEvalDetailsCompletedEvent
-  // (Call B) instead, below.
-  @OnEvent(EvaluationCompletedEvent.eventName)
-  handleEvaluationCompleted(event: EvaluationCompletedEvent): void {
-    if (event.phase === 'plan') return;
-    this.tasks.track(
-      this.generate(event.evaluationId, event.model),
-      `mentor.generate(${event.evaluationId})`,
-    );
-  }
-
-  // For PLAN phase: fired after Call B persists feedback + top_actions
-  // + gap_topics. If Call B failed (succeeded=false), the row carries
-  // a detailsError instead — generating mentor from an empty narrative
-  // is worse than not generating, so we skip.
-  @OnEvent(PlanEvalDetailsCompletedEvent.eventName)
-  handlePlanDetailsCompleted(event: PlanEvalDetailsCompletedEvent): void {
-    if (!event.succeeded) {
-      this.logger.log(
-        `Skipping mentor.generate for eval ${event.evaluationId} — Call B failed.`,
-      );
-      return;
-    }
-    this.tasks.track(
-      this.generate(event.evaluationId),
-      `mentor.generate(${event.evaluationId})`,
-    );
-  }
 
   async generate(evaluationId: string, model?: string) {
     const evalRow = await this.evalRepo.findById(evaluationId);
@@ -124,6 +87,7 @@ export class MentorService {
     }
 
     const row = await this.mentorRepo.upsertByEvaluationId(evaluationId, result);
+    await this.feedbackService.noteMentorArtifactChanged(session.userId);
 
     await this.writeToDisk(evalRow.sessionId, evaluationId, result).catch((err) => {
       this.logger.warn(

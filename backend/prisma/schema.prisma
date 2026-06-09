@@ -72,9 +72,30 @@ model User {
   questions Question[]
   sessions  Session[]
   llmSpend  LlmSpend[]
+  feedbackSummary FeedbackSummary?
+  feedbackProjectionState FeedbackProjectionState?
 
   @@index([deletedAt])
   @@map("users")
+}
+
+model FeedbackProjectionState {
+  userId    String   @id @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("feedback_projection_state")
+}
+
+model FeedbackSummary {
+  userId             String   @id @map("user_id") @db.Uuid
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  computedForVersion Int      @map("computed_for_version")
+  generatedAt        DateTime @default(now()) @map("generated_at")
+  payload            Json
+
+  @@map("feedback_summaries")
 }
 
 // Per-user per-call LLM spend ledger. One row inserted by
@@ -156,6 +177,7 @@ model Session {
 
   snapshots           Snapshot[]
   phaseEvaluations    PhaseEvaluation[]
+  evaluationJobs      EvaluationJob[]
   aiInteractions      AIInteraction[]
   finalArtifacts      FinalArtifacts?
   buildEvents         BuildEvent[]
@@ -273,6 +295,7 @@ model PhaseEvaluation {
   audit         EvaluationAudit?
   mentor        MentorArtifact?
   signalMentor  SignalMentorArtifact?
+  jobs          EvaluationJob[]
 
   // Each Re-evaluate inserts a new row (no upsert); history is preserved.
   // Ordered index makes "latest plan eval for session X" a single seek.
@@ -285,6 +308,36 @@ model PhaseEvaluation {
   // and returns the winner's row.
   @@unique([sessionId, phase, inputFingerprint], map: "phase_evaluations_session_phase_fingerprint_uniq")
   @@map("phase_evaluations")
+}
+
+enum EvaluationJobState {
+  queued
+  running
+  completed
+  failed
+}
+
+model EvaluationJob {
+  id             String             @id
+  jobType        String             @map("job_type")
+  sessionId      String             @map("session_id") @db.Uuid
+  evaluationId   String?            @map("evaluation_id") @db.Uuid
+  phase          Phase?
+  state          EvaluationJobState @default(queued)
+  attempts       Int                @default(0)
+  lastError      String?            @map("last_error")
+  queuedAt       DateTime           @default(now()) @map("queued_at")
+  startedAt      DateTime?          @map("started_at")
+  completedAt    DateTime?          @map("completed_at")
+  failedAt       DateTime?          @map("failed_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  session    Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  evaluation PhaseEvaluation? @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, state])
+  @@index([evaluationId])
+  @@map("evaluation_jobs")
 }
 
 // 1:1 audit row per PhaseEvaluation. Captures the exact prompt sent to the
