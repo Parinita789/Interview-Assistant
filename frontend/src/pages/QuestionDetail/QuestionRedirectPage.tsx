@@ -47,7 +47,7 @@ export function QuestionRedirectPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Link
           to="/home"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-700 hover:text-teal-900"
         >
           <span aria-hidden="true">←</span>
           Back to questions
@@ -56,7 +56,7 @@ export function QuestionRedirectPage() {
           {stats.latestActive && (
             <Link
               to={`/sessions/${stats.latestActive.id}/active`}
-              className="inline-flex h-9 items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-800 hover:bg-teal-100"
             >
               Resume active attempt
             </Link>
@@ -65,7 +65,7 @@ export function QuestionRedirectPage() {
             type="button"
             onClick={() => retryMutation.mutate(undefined)}
             disabled={retryMutation.isPending}
-            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-teal-700 px-3 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {retryMutation.isPending ? 'Starting…' : '+ New attempt'}
           </button>
@@ -73,17 +73,17 @@ export function QuestionRedirectPage() {
       </div>
 
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-gray-950 via-blue-900 to-violet-900 px-5 py-5 text-white">
-          <p className="max-w-4xl whitespace-pre-wrap text-sm leading-6 text-blue-50">
+        <div className="bg-gradient-to-r from-gray-950 via-slate-800 to-teal-900 px-5 py-5 text-white">
+          <p className="max-w-4xl whitespace-pre-wrap text-sm leading-6 text-teal-50">
             {question.prompt}
           </p>
         </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon="🎯" label="Attempts" value={question.sessions.length.toString()} detail="Total runs" accent="from-sky-500 to-blue-600" />
-        <MetricCard icon="✅" label="Completed" value={stats.completedCount.toString()} detail="Finished attempts" accent="from-emerald-500 to-teal-600" />
-        <MetricCard icon="⚡" label="Active" value={stats.activeCount.toString()} detail="In progress" accent="from-violet-500 to-fuchsia-600" />
+        <MetricCard icon="🎯" label="Attempts" value={question.sessions.length.toString()} detail="Total runs" accent="from-teal-500 to-slate-700" />
+        <MetricCard icon="✅" label="Completed" value={stats.completedCount.toString()} detail="Finished attempts" accent="from-amber-500 to-teal-700" />
+        <MetricCard icon="⚡" label="Active" value={stats.activeCount.toString()} detail="In progress" accent="from-amber-500 to-rose-500" />
         <MetricCard
           icon="🏆"
           label="Best score"
@@ -102,7 +102,7 @@ export function QuestionRedirectPage() {
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         <div className="flex flex-col gap-2 border-b border-gray-100 bg-gray-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-violet-100 text-violet-700">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-700">
               ≡
             </span>
             Attempts
@@ -110,7 +110,7 @@ export function QuestionRedirectPage() {
           <div className="text-xs text-gray-500">Review completed attempts or continue active sessions.</div>
         </div>
           {question.sessions.length === 0 ? (
-            <div className="m-4 rounded-lg border border-dashed border-blue-200 bg-blue-50/60 px-4 py-12 text-center">
+            <div className="m-4 rounded-lg border border-dashed border-teal-200 bg-teal-50/60 px-4 py-12 text-center">
               <div className="text-3xl" aria-hidden="true">📝</div>
               <div className="mt-2 text-sm font-semibold text-gray-900">No attempts for this question</div>
               <p className="mt-1 text-sm text-gray-600">
@@ -222,7 +222,7 @@ function AttemptsTable({
                 ? `/sessions/${attempt.id}/active`
                 : `/sessions/${attempt.id}`;
             return (
-              <tr key={attempt.id} className="hover:bg-blue-50/60">
+              <tr key={attempt.id} className="hover:bg-teal-50/60">
                 <td className="px-3 py-3">
                   <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs font-medium capitalize text-gray-700">
                     {attempt.status}
@@ -239,7 +239,7 @@ function AttemptsTable({
                 <td className="px-3 py-3 text-right">
                   <Link
                     to={href}
-                    className="text-sm font-medium text-blue-700 hover:underline"
+                    className="text-sm font-medium text-teal-700 hover:underline"
                   >
                     {attempt.status === 'active' ? 'Resume' : 'Review'}
                   </Link>

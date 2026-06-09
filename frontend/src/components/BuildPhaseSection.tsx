@@ -84,7 +84,7 @@ function NotStartedCard({
   error: string | null;
 }) {
   return (
-    <div className="rounded border border-blue-200 bg-blue-50/40 p-3">
+    <div className="rounded border border-teal-200 bg-teal-50/40 p-3">
       <div className="text-sm text-gray-800 mb-2">
         Capture your build live. Run a watcher in your project directory while
         you implement the plan; we'll record file saves and use them to score
@@ -102,7 +102,7 @@ function NotStartedCard({
         type="button"
         onClick={onStart}
         disabled={loading}
-        className="rounded bg-blue-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+        className="rounded bg-teal-700 text-white px-3 py-1.5 text-sm font-medium hover:bg-teal-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
       >
         {loading ? 'Minting token…' : 'Start build phase'}
       </button>
@@ -141,9 +141,9 @@ function InProgressCard({
   const stage = eventCount === 0 ? 'waiting' : 'in-progress';
 
   return (
-    <div className="rounded border border-blue-200 bg-blue-50/40 p-3 space-y-3">
+    <div className="rounded border border-teal-200 bg-teal-50/40 p-3 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+        <span className="inline-block w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
         <span className="text-sm font-medium text-gray-800">
           {stage === 'waiting'
             ? 'Waiting for the watcher to capture events…'
@@ -180,7 +180,7 @@ function InProgressCard({
             type="button"
             onClick={onRotate}
             disabled={rotating}
-            className="rounded border border-blue-300 bg-white text-blue-700 px-2 py-1 text-[11px] font-medium hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded border border-teal-300 bg-white text-teal-700 px-2 py-1 text-[11px] font-medium hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {rotating ? 'Rotating…' : 'Re-mint token'}
           </button>
@@ -226,7 +226,7 @@ mentor watch ${token}${watchFlags ? ` ${watchFlags}` : ''}`;
         <button
           type="button"
           onClick={copy}
-          className="text-[11px] text-blue-700 hover:underline"
+          className="text-[11px] text-teal-700 hover:underline"
         >
           {copied ? 'Copied!' : 'Copy'}
         </button>
@@ -281,7 +281,7 @@ function CompleteCard({
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="text-xs text-blue-700 hover:underline"
+            className="text-xs text-teal-700 hover:underline"
             aria-expanded={open}
           >
             {open ? '▼' : '▶'} Per-file timeline ({summary.perFile.length})

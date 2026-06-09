@@ -1,15 +1,30 @@
 import { api } from './api';
-import { EvaluationAudit, PhaseEvaluation } from '@/types/evaluation';
+import {
+  EvaluationAudit,
+  EvaluationJobStatus,
+  EvaluationQueueResponse,
+  PhaseEvaluation,
+} from '@/types/evaluation';
 
 export const evaluationsService = {
   runForSession(sessionId: string, model?: string) {
     return api
-      .post<PhaseEvaluation[]>(`/sessions/${encodeURIComponent(sessionId)}/evaluate`, model ? { model } : {})
+      .post<EvaluationQueueResponse>(`/sessions/${encodeURIComponent(sessionId)}/evaluate`, model ? { model } : {})
       .then((r) => r.data);
   },
   listForSession(sessionId: string) {
     return api
       .get<PhaseEvaluation[]>(`/sessions/${encodeURIComponent(sessionId)}/evaluations`)
+      .then((r) => r.data);
+  },
+  listJobsForSession(sessionId: string) {
+    return api
+      .get<EvaluationJobStatus[]>(`/sessions/${encodeURIComponent(sessionId)}/evaluation-jobs`)
+      .then((r) => r.data);
+  },
+  getJobStatus(jobId: string) {
+    return api
+      .get<EvaluationJobStatus>(`/evaluation-jobs/${encodeURIComponent(jobId)}/status`)
       .then((r) => r.data);
   },
   get(id: string) {

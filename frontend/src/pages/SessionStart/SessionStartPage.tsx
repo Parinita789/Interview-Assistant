@@ -26,38 +26,35 @@ function classifyKind(prompt: string): QuestionKind {
   return 'traditional_design';
 }
 
-const KIND_DESCRIPTIONS: Record<QuestionKind, string> = {
-  traditional_design: 'Production-scale system, no LLM/agent. Plan only.',
-  agentic_design: 'AI/agent system, design-only. Plan only.',
-  agentic_build: '1-hour buildable agent. Plan + watched build phase.',
-};
-
 const PROMPT_STARTERS = [
   {
-    label: 'Classic design',
+    label: 'Traditional design',
+    kind: 'traditional_design',
     prompt: 'Design a URL shortener that handles 100M URLs/day with sub-50ms read latency.',
   },
   {
     label: 'AI design',
+    kind: 'agentic_design',
     prompt: 'Design an AI code review assistant that comments on pull requests and learns team style.',
   },
   {
     label: 'Build agent',
+    kind: 'agentic_build',
     prompt: 'Build a one-hour agent that summarizes incident logs and proposes next debugging steps.',
   },
-];
+] satisfies Array<{ label: string; kind: QuestionKind; prompt: string }>;
 
 type StatusFilter = 'all' | 'active' | 'completed' | 'unattempted';
 
 const METRIC_META = {
   questions: {
     icon: '📚',
-    accent: 'from-sky-500 to-blue-600',
+    accent: 'from-teal-500 to-slate-700',
     tint: 'bg-sky-50 text-sky-700',
   },
   completed: {
     icon: '✅',
-    accent: 'from-emerald-500 to-teal-600',
+    accent: 'from-amber-500 to-teal-700',
     tint: 'bg-emerald-50 text-emerald-700',
   },
   best: {
@@ -67,8 +64,8 @@ const METRIC_META = {
   },
   latest: {
     icon: '⚡',
-    accent: 'from-violet-500 to-fuchsia-600',
-    tint: 'bg-violet-50 text-violet-700',
+    accent: 'from-amber-500 to-rose-500',
+    tint: 'bg-amber-50 text-amber-700',
   },
 } as const;
 
@@ -83,6 +80,7 @@ export function SessionStartPage() {
   });
   const questions = questionsQuery.data ?? [];
   const stats = useMemo(() => buildHomeStats(questions), [questions]);
+  const activeSessions = useMemo(() => buildActiveSessionLinks(questions), [questions]);
   const visibleQuestions = useMemo(
     () => filterQuestions(questions, { query, kind: kindFilter, status: statusFilter }),
     [kindFilter, query, questions, statusFilter],
@@ -91,16 +89,16 @@ export function SessionStartPage() {
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-gray-100 bg-gradient-to-r from-gray-950 via-slate-800 to-blue-900 px-5 py-5 text-white lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-gray-100 bg-gradient-to-r from-white via-slate-50 to-teal-50 px-5 py-5 text-gray-950 dark:from-gray-950 dark:via-slate-800 dark:to-teal-900 dark:text-white lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Sharpen the next system design round</h1>
-            <p className="mt-1 max-w-2xl text-sm text-blue-100">
+            <p className="mt-1 max-w-2xl text-sm text-gray-600 dark:text-teal-100">
               Track attempted prompts, find unfinished sessions, and start a focused practice run.
             </p>
           </div>
           <Link
             to="/practice/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-white px-4 text-sm font-semibold text-gray-950 shadow-sm hover:bg-blue-50"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-teal-700 px-4 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 dark:bg-white dark:text-gray-950 dark:hover:bg-teal-50"
           >
             + New Question
           </Link>
@@ -132,9 +130,29 @@ export function SessionStartPage() {
         <MetricCard
           meta={METRIC_META.latest}
           label="Latest"
-          value={stats.latestScore === null ? '—' : stats.latestScore.toFixed(2)}
-          detail={stats.latestDate ? `Ended ${relativeTime(stats.latestDate)}` : 'No results yet'}
+          value={
+            activeSessions[0]
+              ? 'Active'
+              : stats.latestScore === null
+                ? '-'
+                : stats.latestScore.toFixed(2)
+          }
+          detail={
+            activeSessions[0]
+              ? `Started ${relativeTime(activeSessions[0].startedAt)}`
+              : stats.latestDate
+                ? `Ended ${relativeTime(stats.latestDate)}`
+                : 'No results yet'
+          }
           isLoading={questionsQuery.isPending}
+          action={
+            activeSessions[0]
+              ? {
+                  label: 'Resume',
+                  to: `/sessions/${activeSessions[0].id}/active`,
+                }
+              : undefined
+          }
         />
       </section>
 
@@ -142,7 +160,7 @@ export function SessionStartPage() {
         <div className="border-b border-gray-100 bg-gray-50/80 px-4 py-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-teal-100 text-teal-700">
                 ✦
               </span>
               Practice questions
@@ -152,12 +170,12 @@ export function SessionStartPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search questions"
-                className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-64"
+                className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm outline-none transition focus:border-teal-600 focus:ring-2 focus:ring-teal-100 sm:w-64"
               />
               <select
                 value={kindFilter}
                 onChange={(e) => setKindFilter(e.target.value as QuestionKind | 'all')}
-                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700 outline-none transition focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
               >
                 <option value="all">All kinds</option>
                 {QUESTION_KINDS.map((kind) => (
@@ -169,7 +187,7 @@ export function SessionStartPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700 outline-none transition focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
               >
                 <option value="all">All status</option>
                 <option value="active">Active</option>
@@ -187,7 +205,7 @@ export function SessionStartPage() {
             Failed to load questions: {describeError(questionsQuery.error)}
           </div>
         ) : visibleQuestions.length === 0 ? (
-          <div className="m-4 rounded-lg border border-dashed border-blue-200 bg-blue-50/60 px-4 py-12 text-center">
+          <div className="m-4 rounded-lg border border-dashed border-teal-200 bg-teal-50/60 px-4 py-12 text-center">
             <div className="text-3xl" aria-hidden="true">
               🔎
             </div>
@@ -247,7 +265,7 @@ export function NewQuestionPracticePage() {
       <div>
         <Link
           to="/home"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-700 hover:text-teal-900"
         >
           <span aria-hidden="true">←</span>
           Back to questions
@@ -255,16 +273,16 @@ export function NewQuestionPracticePage() {
       </div>
 
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-4 bg-gradient-to-r from-gray-950 via-blue-900 to-violet-900 px-5 py-5 text-white sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 bg-gradient-to-r from-white via-slate-50 to-teal-50 px-5 py-5 text-gray-950 dark:from-gray-950 dark:via-slate-800 dark:to-teal-900 dark:text-white sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Create a new practice question</h1>
-            <p className="mt-1 max-w-2xl text-sm text-blue-100">
+            <p className="mt-1 max-w-2xl text-sm text-gray-600 dark:text-teal-100">
               Paste your prompt, pick the interview level, and start a focused system design session.
             </p>
           </div>
-          <div className="hidden rounded-lg bg-white/10 px-4 py-3 text-sm ring-1 ring-white/15 sm:block">
+          <div className="hidden rounded-lg bg-white px-4 py-3 text-sm text-gray-900 ring-1 ring-gray-200 dark:bg-white/10 dark:text-white dark:ring-white/15 sm:block">
             <div className="font-semibold">Ready when your prompt is clear</div>
-            <div className="mt-1 text-xs text-blue-100">Minimum {MIN_PROMPT_LENGTH} characters</div>
+            <div className="mt-1 text-xs text-gray-500 dark:text-teal-100">Minimum {MIN_PROMPT_LENGTH} characters</div>
           </div>
         </div>
       </section>
@@ -276,7 +294,7 @@ export function NewQuestionPracticePage() {
         >
           <div className="border-b border-gray-100 bg-gray-50/80 px-4 py-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-teal-100 text-teal-700">
                 ✎
               </span>
               Prompt
@@ -285,15 +303,17 @@ export function NewQuestionPracticePage() {
 
           <div className="space-y-5 p-4">
             <label className="block">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={10}
-                placeholder="e.g. Design a URL shortener that handles 100M URLs/day with sub-50ms read latency."
-                className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-mono shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                disabled={mutation.isPending}
-                autoFocus
-              />
+              <div className="w-full">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={6}
+                  placeholder="e.g. Design a URL shortener that handles 100M URLs/day with sub-50ms read latency."
+                  className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-mono shadow-sm outline-none transition focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  disabled={mutation.isPending}
+                  autoFocus
+                />
+              </div>
               {tooShort && (
                 <span className="mt-2 block text-xs font-medium text-red-600">
                   Question must be at least {MIN_PROMPT_LENGTH} characters.
@@ -306,33 +326,29 @@ export function NewQuestionPracticePage() {
                 Prompt starters
               </div>
               <div className="flex flex-wrap gap-2">
-                {PROMPT_STARTERS.map((starter) => (
-                  <button
-                    key={starter.label}
-                    type="button"
-                    onClick={() => {
-                      setPrompt(starter.prompt);
-                      setUserKind(null);
-                    }}
-                    disabled={mutation.isPending}
-                    className="rounded-full border border-blue-100 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:opacity-50"
-                  >
-                    {starter.label}
-                  </button>
-                ))}
+                {PROMPT_STARTERS.map((starter) => {
+                  const selected = effectiveKind === starter.kind;
+                  return (
+                    <button
+                      key={starter.label}
+                      type="button"
+                      onClick={() => {
+                        setPrompt(starter.prompt);
+                        setUserKind(starter.kind);
+                      }}
+                      disabled={mutation.isPending}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors disabled:opacity-50 ${
+                        selected
+                          ? 'border-teal-800 bg-teal-700 text-white'
+                          : 'border-teal-100 bg-white text-gray-700 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800'
+                      }`}
+                    >
+                      {starter.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-
-            {effectiveKind && (
-              <KindPicker
-                inferred={inferredKind}
-                effective={effectiveKind}
-                isOverride={userKind !== null}
-                onPick={(k) => setUserKind(k)}
-                onClearOverride={() => setUserKind(null)}
-                disabled={mutation.isPending}
-              />
-            )}
 
             <SeniorityPicker
               value={seniority}
@@ -347,7 +363,7 @@ export function NewQuestionPracticePage() {
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                className="inline-flex h-10 items-center justify-center rounded-md bg-teal-700 px-5 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {mutation.isPending ? 'Starting…' : 'Start session'}
               </button>
@@ -390,17 +406,19 @@ function QuestionTable({ questions }: { questions: QuestionWithSessions[] }) {
             <th className="px-3 py-2 font-medium">Status</th>
             <th className="px-3 py-2 text-right font-medium">Attempts</th>
             <th className="px-3 py-2 text-right font-medium">Best</th>
-            <th className="px-4 py-2 text-right font-medium">Last</th>
+            <th className="px-3 py-2 text-right font-medium">Last</th>
+            <th className="px-4 py-2 text-right font-medium">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
           {questions.map((question) => {
             const summary = summarizeQuestion(question);
+            const activeSession = latestActiveSession(question);
             return (
               <tr key={question.id} className="group transition-colors hover:bg-sky-50/70">
                 <td className="px-4 py-3">
                   <Link to={`/questions/${question.id}`} className="block">
-                    <div className="line-clamp-2 font-medium text-gray-950 group-hover:text-blue-800">
+                    <div className="line-clamp-2 font-medium text-gray-950 group-hover:text-teal-800">
                       {question.prompt}
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
@@ -420,8 +438,25 @@ function QuestionTable({ questions }: { questions: QuestionWithSessions[] }) {
                 <td className="px-3 py-3 text-right font-semibold tabular-nums text-gray-900">
                   {summary.bestScore === null ? '—' : summary.bestScore.toFixed(2)}
                 </td>
-                <td className="px-4 py-3 text-right text-xs text-gray-500">
+                <td className="px-3 py-3 text-right text-xs text-gray-500">
                   {summary.lastAttemptAt ? relativeTime(summary.lastAttemptAt) : '—'}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {activeSession ? (
+                    <Link
+                      to={`/sessions/${activeSession.id}/active`}
+                      className="inline-flex h-8 items-center justify-center rounded-md bg-teal-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-teal-800"
+                    >
+                      Resume
+                    </Link>
+                  ) : (
+                    <Link
+                      to={`/questions/${question.id}`}
+                      className="text-xs font-medium text-teal-700 hover:text-teal-900 hover:underline"
+                    >
+                      View
+                    </Link>
+                  )}
                 </td>
               </tr>
             );
@@ -435,7 +470,7 @@ function QuestionTable({ questions }: { questions: QuestionWithSessions[] }) {
 function KindPill({ kind }: { kind: QuestionKind }) {
   const styles = {
     traditional_design: 'border-sky-200 bg-sky-50 text-sky-700',
-    agentic_design: 'border-violet-200 bg-violet-50 text-violet-700',
+    agentic_design: 'border-amber-200 bg-amber-50 text-amber-700',
     agentic_build: 'border-amber-200 bg-amber-50 text-amber-700',
   } satisfies Record<QuestionKind, string>;
 
@@ -466,9 +501,33 @@ function summarizeQuestion(question: QuestionWithSessions) {
   };
 }
 
+function latestActiveSession(question: QuestionWithSessions) {
+  return (
+    [...question.sessions]
+      .filter((session) => session.status === 'active')
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())[0] ??
+    null
+  );
+}
+
+function buildActiveSessionLinks(questions: QuestionWithSessions[]) {
+  return questions
+    .flatMap((question) =>
+      question.sessions
+        .filter((session) => session.status === 'active')
+        .map((session) => ({
+          id: session.id,
+          startedAt: session.startedAt,
+          prompt: question.prompt,
+          kind: question.kind,
+        })),
+    )
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
 function StatusPill({ status }: { status: 'active' | 'completed' | 'attempted' | 'new' }) {
   const styles = {
-    active: 'border-blue-200 bg-blue-50 text-blue-700',
+    active: 'border-teal-200 bg-teal-50 text-teal-700',
     completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     attempted: 'border-amber-200 bg-amber-50 text-amber-700',
     new: 'border-gray-200 bg-white text-gray-600',
@@ -533,6 +592,7 @@ function MetricCard({
   value,
   detail,
   isLoading,
+  action,
 }: {
   meta: {
     icon: string;
@@ -543,6 +603,10 @@ function MetricCard({
   value: string;
   detail: string;
   isLoading: boolean;
+  action?: {
+    label: string;
+    to: string;
+  };
 }) {
   return (
     <div className="group overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
@@ -559,7 +623,17 @@ function MetricCard({
       ) : (
         <div className="mt-2 text-2xl font-semibold tabular-nums text-gray-950">{value}</div>
       )}
-      <div className="mt-1 text-xs text-gray-500">{detail}</div>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <div className="text-xs text-gray-500">{detail}</div>
+        {action && !isLoading && (
+          <Link
+            to={action.to}
+            className="inline-flex h-7 shrink-0 items-center justify-center rounded-md bg-teal-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-teal-800"
+          >
+            {action.label}
+          </Link>
+        )}
+      </div>
       </div>
     </div>
   );
@@ -571,64 +645,6 @@ function QuestionTableSkeleton() {
       {[0, 1, 2, 3, 4].map((i) => (
         <div key={i} className="h-16 animate-pulse rounded-md bg-gray-100" />
       ))}
-    </div>
-  );
-}
-
-function KindPicker({
-  inferred,
-  effective,
-  isOverride,
-  onPick,
-  onClearOverride,
-  disabled,
-}: {
-  inferred: QuestionKind | null;
-  effective: QuestionKind;
-  isOverride: boolean;
-  onPick: (k: QuestionKind) => void;
-  onClearOverride: () => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-gray-600">
-          {isOverride ? 'Kind overridden:' : 'Detected kind:'}
-        </span>
-        <span className="inline-block rounded border border-blue-300 bg-blue-100 px-1.5 py-0.5 font-semibold uppercase tracking-wide text-blue-900">
-          {effective.replace(/_/g, ' ')}
-        </span>
-        <span className="text-gray-700">{KIND_DESCRIPTIONS[effective]}</span>
-        {isOverride && inferred && inferred !== effective && (
-          <button
-            type="button"
-            onClick={onClearOverride}
-            disabled={disabled}
-            className="ml-auto text-gray-500 hover:text-gray-800 disabled:text-gray-300"
-            title="Drop my override; auto-detect from the prompt"
-          >
-            auto
-          </button>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-1">
-        {QUESTION_KINDS.map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => onPick(k)}
-            disabled={disabled}
-            className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
-              k === effective
-                ? 'border-blue-700 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-100'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            {QUESTION_KIND_LABELS[k]}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
@@ -663,7 +679,7 @@ function SeniorityPicker({
               disabled={disabled}
               className={`px-2 py-1.5 text-xs font-medium transition-colors ${
                 isActive
-                  ? 'bg-blue-600 text-white'
+                  ? 'bg-teal-700 text-white'
                   : 'bg-white text-gray-700 hover:bg-gray-100 disabled:text-gray-400 disabled:hover:bg-white'
               } ${i > 0 ? 'border-l border-gray-300' : ''}`}
             >

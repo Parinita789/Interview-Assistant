@@ -6,6 +6,7 @@ export interface EndSessionResult {
   session: Session;
   evaluations: PhaseEvaluation[];
   evalError: string | null;
+  evaluationJobs?: string[];
 }
 
 export const sessionsService = {

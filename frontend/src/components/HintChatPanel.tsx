@@ -68,18 +68,58 @@ export function HintChatPanel({
     }
   };
 
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={onToggleExpanded}
+        aria-expanded={false}
+        className="ml-auto flex h-12 items-center gap-3 rounded-full border border-teal-300/30 bg-slate-950 px-4 text-left text-white shadow-2xl ring-1 ring-white/10 transition hover:-translate-y-0.5 hover:bg-slate-900"
+      >
+        <span
+          aria-hidden="true"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-400 text-slate-950 shadow-[0_0_24px_rgba(45,212,191,0.45)]"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+          >
+            <path d="M12 8V4H8" />
+            <rect width="16" height="12" x="4" y="8" rx="2" />
+            <path d="M2 14h2" />
+            <path d="M20 14h2" />
+            <path d="M15 13v2" />
+            <path d="M9 13v2" />
+          </svg>
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold leading-tight">Coach</span>
+          <span className="block text-[11px] text-teal-100">
+            {messages.length ? `${messages.length} messages` : 'Ask for a hint'}
+          </span>
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-full rounded border border-gray-300 bg-white overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-slate-700 bg-white shadow-2xl ring-1 ring-black/5">
       <button
         type="button"
         onClick={onToggleExpanded}
         aria-expanded={expanded}
-        className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-50 hover:bg-gray-100 text-left shrink-0"
+        className="flex shrink-0 items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-2 text-left text-white hover:bg-slate-900"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden="true"
-            className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-teal-400 text-slate-950"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -99,17 +139,17 @@ export function HintChatPanel({
               <path d="M9 13v2" />
             </svg>
           </span>
-          <span className="text-sm font-medium text-gray-700">Ask the Coach</span>
-          <span className="text-[11px] text-gray-500">
+          <span className="shrink-0 text-sm font-semibold text-white">Ask the Coach</span>
+          <span className="hidden truncate text-[11px] text-slate-400 sm:inline">
             for hints or clarifications
           </span>
           {messages.length > 0 && (
-            <span className="text-[10px] text-gray-500 tabular-nums">
+            <span className="shrink-0 text-[10px] tabular-nums text-slate-400">
               · {messages.length} message{messages.length === 1 ? '' : 's'}
             </span>
           )}
         </div>
-        <span className="text-xs text-gray-500" aria-hidden="true">
+        <span className="ml-3 shrink-0 text-xs text-slate-300" aria-hidden="true">
           {expanded ? '▾' : '▸'}
         </span>
       </button>
@@ -118,14 +158,14 @@ export function HintChatPanel({
         <>
           <div
             ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-3 text-sm"
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3 text-sm"
           >
             {historyQuery.isPending && (
               <div className="text-xs text-gray-500">Loading…</div>
             )}
 
             {!historyQuery.isPending && messages.length === 0 && (
-              <div className="text-xs text-gray-500 italic">
+              <div className="rounded-md border border-dashed border-teal-200 bg-white px-3 py-2 text-xs italic text-gray-500">
                 No messages yet. Ask something like "What's the first thing I should pin down?"
               </div>
             )}
@@ -133,12 +173,12 @@ export function HintChatPanel({
             {messages.map((m) => (
               <div key={m.id} className="space-y-2">
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-lg bg-blue-600 text-white px-3 py-2 whitespace-pre-wrap">
+                  <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-teal-700 px-3 py-2 text-white shadow-sm">
                     {m.prompt}
                   </div>
                 </div>
                 <div className="flex justify-start">
-                  <div className="max-w-[85%] rounded-lg bg-gray-100 text-gray-900 px-3 py-2 whitespace-pre-wrap">
+                  <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-gray-100 px-3 py-2 text-gray-900">
                     {m.response}
                   </div>
                 </div>
@@ -160,8 +200,8 @@ export function HintChatPanel({
             )}
           </div>
 
-          <form onSubmit={handleSubmit} className="border-t border-gray-200 p-2 shrink-0">
-            <div className="flex items-stretch rounded border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500">
+          <form onSubmit={handleSubmit} className="shrink-0 border-t border-gray-200 bg-white p-3">
+            <div className="flex items-stretch rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-teal-600 focus-within:ring-2 focus-within:ring-teal-600">
               <textarea
                 ref={textareaRef}
                 value={draft}
@@ -169,7 +209,7 @@ export function HintChatPanel({
                 onKeyDown={handleKeyDown}
                 rows={1}
                 placeholder="Ask a clarifying question… (Enter to send, Shift+Enter for newline)"
-                className="flex-1 bg-transparent px-2 py-1.5 text-sm resize-none focus:outline-none max-h-40 overflow-y-auto leading-snug"
+                className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent px-3 py-2 text-sm leading-snug focus:outline-none"
                 disabled={sendMutation.isPending}
               />
               <button
@@ -177,7 +217,7 @@ export function HintChatPanel({
                 disabled={!draft.trim() || sendMutation.isPending}
                 aria-label="Send message"
                 title="Send (Enter)"
-                className="self-end m-1 inline-flex items-center justify-center w-7 h-7 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="m-1 inline-flex h-8 w-8 self-end items-center justify-center rounded-md bg-teal-700 text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"

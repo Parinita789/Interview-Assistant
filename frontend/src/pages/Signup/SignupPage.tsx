@@ -69,16 +69,16 @@ export function SignupPage() {
   const passwordOk = password.length >= PASSWORD_MIN && password.length <= PASSWORD_MAX;
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(135deg,#f8fafc_0%,#eef4ff_38%,#ecfeff_100%)] px-4 py-6 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[linear-gradient(135deg,#f8fafc_0%,#f2f7f5_38%,#fff7ed_100%)] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto grid min-h-[calc(100vh-3rem)] w-full max-w-6xl items-stretch gap-5 lg:grid-cols-[minmax(0,1.1fr)_420px]">
-        <aside className="flex flex-col justify-between overflow-hidden rounded-2xl border border-blue-100 bg-[linear-gradient(180deg,rgba(255,255,255,0.92)_0%,rgba(239,246,255,0.9)_100%)] p-8 shadow-sm backdrop-blur">
+        <aside className="flex flex-col justify-between overflow-hidden rounded-2xl border border-teal-100 bg-[linear-gradient(180deg,rgba(255,255,255,0.94)_0%,rgba(240,253,250,0.82)_100%)] p-8 shadow-sm backdrop-blur">
           <div>
             <div className="mt-6 inline-flex items-center gap-3">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 via-cyan-500 to-emerald-400 text-xl font-bold text-white shadow-lg shadow-blue-200">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-xl font-bold text-white shadow-sm ring-2 ring-teal-500/20">
                 DC
               </span>
               <div>
-                <div className="text-sm font-semibold uppercase tracking-[0.28em] text-blue-700">
+                <div className="text-sm font-semibold uppercase tracking-[0.28em] text-teal-700">
                   Design Coach
                 </div>
                 <div className="text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl">
@@ -119,7 +119,7 @@ export function SignupPage() {
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-gray-700">
                 <span className="rounded-full bg-sky-50 px-3 py-1 text-sky-700">Questions</span>
-                <span className="rounded-full bg-violet-50 px-3 py-1 text-violet-700">Mentor feedback</span>
+                <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">Mentor feedback</span>
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Daily spend</span>
                 <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">Session history</span>
               </div>
@@ -129,11 +129,11 @@ export function SignupPage() {
 
         <section className="flex items-center">
           <div className="w-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-            <div className="border-b border-gray-100 bg-gradient-to-r from-slate-950 via-blue-900 to-cyan-900 px-6 py-5 text-white">
+            <div className="border-b border-gray-100 bg-gradient-to-r from-slate-950 via-slate-800 to-teal-900 px-6 py-5 text-white">
               <h2 className="text-2xl font-semibold tracking-tight">✨ Create an account</h2>
-              <p className="mt-1 text-sm text-blue-100">
+              <p className="mt-1 text-sm text-teal-100">
                 Already have one?{' '}
-                <Link to="/login" className="font-medium text-white hover:text-blue-100">
+                <Link to="/login" className="font-medium text-white hover:text-teal-100">
                   Sign in
                 </Link>
                 .
@@ -143,7 +143,7 @@ export function SignupPage() {
             <form onSubmit={onSubmit} className="space-y-5 px-6 py-6">
               <label className="block">
                 <span className="text-sm font-medium text-gray-700">Name</span>
-                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-teal-600 focus-within:ring-4 focus-within:ring-teal-100">
                   <span className="flex h-full items-center px-3 text-gray-400" aria-hidden="true">
                     👤
                   </span>
@@ -163,7 +163,7 @@ export function SignupPage() {
 
               <label className="block">
                 <span className="text-sm font-medium text-gray-700">Email</span>
-                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-teal-600 focus-within:ring-4 focus-within:ring-teal-100">
                   <span className="flex h-full items-center px-3 text-gray-400" aria-hidden="true">
                     @
                   </span>
@@ -186,7 +186,7 @@ export function SignupPage() {
                     ({PASSWORD_MIN}–{PASSWORD_MAX} characters)
                   </span>
                 </span>
-                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+                <div className="mt-1 flex h-11 items-center rounded-lg border border-gray-300 bg-white shadow-sm focus-within:border-teal-600 focus-within:ring-4 focus-within:ring-teal-100">
                   <span className="flex h-full items-center px-3 text-gray-400" aria-hidden="true">
                     🔒
                   </span>
@@ -227,7 +227,7 @@ export function SignupPage() {
               <button
                 type="submit"
                 disabled={mutation.isPending || !nameOk || !email || !passwordOk}
-                className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-teal-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {mutation.isPending ? 'Creating account…' : 'Create account'}
               </button>

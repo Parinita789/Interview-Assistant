@@ -1,5 +1,10 @@
 import { api } from './api';
-import { HeatmapCell, TrendPoint, WeaknessSummary } from '@/types/dashboard';
+import {
+  FeedbackSummary,
+  HeatmapCell,
+  TrendPoint,
+  WeaknessSummary,
+} from '@/types/dashboard';
 
 export const dashboardService = {
   trend(rubricVersion?: string) {
@@ -16,5 +21,8 @@ export const dashboardService = {
     return api
       .get<WeaknessSummary[]>('/dashboard/weaknesses', { params: { rubricVersion } })
       .then((r) => r.data);
+  },
+  feedback() {
+    return api.get<FeedbackSummary>('/dashboard/feedback').then((r) => r.data);
   },
 };

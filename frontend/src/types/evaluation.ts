@@ -26,6 +26,27 @@ export interface PhaseEvaluation {
   detailsError?: string | null;
 }
 
+export interface EvaluationQueueResponse {
+  status: 'queued';
+  jobIds: string[];
+}
+
+export interface EvaluationJobStatus {
+  id: string;
+  jobType: string;
+  sessionId: string;
+  evaluationId?: string | null;
+  phase?: Phase | null;
+  state: 'queued' | 'running' | 'completed' | 'failed';
+  attempts: number;
+  lastError?: string | null;
+  queuedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  failedAt?: string | null;
+  updatedAt: string;
+}
+
 export interface GapTopic {
   name: string;
   coverage: 'missed' | 'lightly_touched';

@@ -9,7 +9,13 @@ import { evaluationsService } from '@/services/evaluations.service';
 import { rubricsService } from '@/services/rubrics.service';
 import { useSessionStore } from '@/store/sessionStore';
 import { ScoreBreakdown } from '@/components/ScoreBreakdown';
-import { EvaluationAudit, GapTopic, PhaseEvaluation, SignalResult } from '@/types/evaluation';
+import {
+  EvaluationAudit,
+  EvaluationJobStatus,
+  GapTopic,
+  PhaseEvaluation,
+  SignalResult,
+} from '@/types/evaluation';
 import { Rubric, RubricSignal, WeightTier } from '@/types/rubric';
 import { QuestionKind, QuestionWithSessions, SENIORITIES, Seniority } from '@/types/question';
 import { computeCostUsd, formatCostUsd, formatLatency } from '@/lib/llm-cost';
@@ -38,7 +44,7 @@ const RESULT_STYLES: Record<ResultKind, { label: string; className: string }> = 
 
 const WEIGHT_STYLES: Record<WeightTier, string> = {
   high: 'bg-rose-50 text-rose-700 border-rose-200',
-  medium: 'bg-blue-50 text-blue-700 border-blue-200',
+  medium: 'bg-teal-50 text-teal-700 border-teal-200',
   low: 'bg-gray-50 text-gray-600 border-gray-200',
 };
 
@@ -71,6 +77,13 @@ function formatModelName(model: string | null | undefined): string {
   return `${tier} ${m[2]}.${m[3]}`;
 }
 
+function formatJobType(jobType: string): string {
+  return jobType
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function scoreVerdict(score: number | string): { label: string; className: string } {
   const n = typeof score === 'string' ? parseFloat(score) : score;
   if (!Number.isFinite(n)) {
@@ -91,6 +104,7 @@ export function SessionResultsPage() {
   const [planMdExpanded, setPlanMdExpanded] = useState(false);
   const [attemptsOpen, setAttemptsOpen] = useState(false);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
+  const [queuedEvalSince, setQueuedEvalSince] = useState<number | null>(null);
 
   const sessionQuery = useQuery({
     queryKey: ['session', id],
@@ -111,6 +125,20 @@ export function SessionResultsPage() {
     // session loaded in the UI would poll forever.
     refetchInterval: (q) => {
       const rows = (q.state.data as PhaseEvaluation[] | undefined) ?? [];
+      const newestEval = [...rows].sort((a, b) =>
+        a.evaluatedAt < b.evaluatedAt ? 1 : -1,
+      )[0];
+      if (
+        queuedEvalSince &&
+        (!newestEval || new Date(newestEval.evaluatedAt).getTime() < queuedEvalSince)
+      ) {
+        return Date.now() - queuedEvalSince < 5 * 60 * 1000 ? 3000 : false;
+      }
+      const endedAt = sessionQuery.data?.endedAt;
+      if (!rows.length && endedAt) {
+        const endedAgeMs = Date.now() - new Date(endedAt).getTime();
+        if (endedAgeMs < 5 * 60 * 1000) return 3000;
+      }
       const latestPlan = rows
         .filter((r) => r.phase === 'plan')
         .sort((a, b) => (a.evaluatedAt < b.evaluatedAt ? 1 : -1))[0];
@@ -123,6 +151,18 @@ export function SessionResultsPage() {
       const ageMs = Date.now() - new Date(latestPlan.evaluatedAt).getTime();
       if (ageMs > 5 * 60 * 1000) return false;
       return 3000;
+    },
+  });
+
+  const evaluationJobsQuery = useQuery({
+    queryKey: ['evaluation-jobs', id],
+    queryFn: () => evaluationsService.listJobsForSession(id!),
+    enabled: !!id,
+    refetchInterval: (q) => {
+      const rows = (q.state.data as EvaluationJobStatus[] | undefined) ?? [];
+      return rows.some((job) => job.state === 'queued' || job.state === 'running')
+        ? 3000
+        : false;
     },
   });
 
@@ -160,7 +200,10 @@ export function SessionResultsPage() {
   const reEvalMutation = useMutation({
     mutationFn: (model?: string) => evaluationsService.runForSession(id!, model),
     onSuccess: () => {
-      setSelectedEvalId(null);      queryClient.invalidateQueries({ queryKey: ['evals', id] });
+      setQueuedEvalSince(Date.now());
+      setSelectedEvalId(null);
+      queryClient.invalidateQueries({ queryKey: ['evals', id] });
+      queryClient.invalidateQueries({ queryKey: ['evaluation-jobs', id] });
       queryClient.invalidateQueries({ queryKey: ['question', questionId] });
       queryClient.invalidateQueries({ queryKey: ['questions'] });
       queryClient.invalidateQueries({ queryKey: DAILY_SPEND_QUERY_KEY });
@@ -224,6 +267,27 @@ export function SessionResultsPage() {
     return planEvals[0];
   }, [planEvals, selectedEvalId]);
   const isLatestDisplayed = displayedEval?.id === planEvals[0]?.id;
+  const latestEvaluationJob = useMemo(() => {
+    const jobs = evaluationJobsQuery.data ?? [];
+    return jobs.find((job) =>
+      ['plan-score', 'build-evaluation'].includes(job.jobType),
+    );
+  }, [evaluationJobsQuery.data]);
+  const latestJobIsNewerThanEval =
+    !!latestEvaluationJob &&
+    (!displayedEval ||
+      new Date(displayedEval.evaluatedAt).getTime() <
+        new Date(latestEvaluationJob.updatedAt).getTime());
+  const queuedEvaluationJob =
+    latestJobIsNewerThanEval &&
+    latestEvaluationJob &&
+    (latestEvaluationJob.state === 'queued' || latestEvaluationJob.state === 'running')
+      ? latestEvaluationJob
+      : null;
+  const failedEvaluationJob =
+    latestJobIsNewerThanEval && latestEvaluationJob?.state === 'failed'
+      ? latestEvaluationJob
+      : null;
 
   if (!id) return <div>Missing session id.</div>;
   if (deleteMutation.isPending || deleteMutation.isSuccess) {
@@ -253,10 +317,10 @@ export function SessionResultsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
-      <div className="flex flex-col gap-2 rounded-lg border border-blue-100 bg-blue-50/70 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 rounded-lg border border-teal-100 bg-teal-50/70 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <Link
           to={questionId ? `/questions/${questionId}` : '/home'}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-700 hover:text-teal-900"
         >
           <span aria-hidden="true">←</span>
           Back to question
@@ -285,29 +349,29 @@ export function SessionResultsPage() {
       </div>
 
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-gray-950 via-blue-900 to-violet-900 px-5 py-5 text-white">
+        <div className="bg-gradient-to-r from-gray-950 via-slate-800 to-teal-900 px-5 py-5 text-white">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
-            <p className="max-w-4xl whitespace-pre-wrap text-base font-medium leading-7 text-blue-50">
+            <p className="max-w-4xl whitespace-pre-wrap text-base font-medium leading-7 text-teal-50">
               {session.question.prompt}
             </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-blue-100">
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-teal-100">
                 {session.status}
               </span>
               {session.seniority && (
-                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-blue-100">
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium capitalize text-teal-100">
                   {session.seniority}
                 </span>
               )}
-              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-teal-100">
                 {evalsQuery.data?.length ?? 0} eval{(evalsQuery.data?.length ?? 0) === 1 ? '' : 's'}
               </span>
-              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-teal-100">
                 {planMd ? planMd.length : 0} plan chars
               </span>
               {session.endedAt && (
-                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-blue-100">
+                <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-medium text-teal-100">
                   ended {new Date(session.endedAt).toLocaleDateString()}
                 </span>
               )}
@@ -315,7 +379,7 @@ export function SessionResultsPage() {
           </div>
           <div className="w-full shrink-0 rounded-lg bg-white/10 px-4 py-3 ring-1 ring-white/15 sm:w-48">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-blue-100">
+              <div className="text-xs font-medium uppercase tracking-wide text-teal-100">
                 Score
               </div>
               {displayedVerdict && (
@@ -332,7 +396,7 @@ export function SessionResultsPage() {
                   ? '—'
                   : formatScore(displayedScore)}
               </span>
-              <span className="pb-1 text-sm text-blue-100">/ 5</span>
+              <span className="pb-1 text-sm text-teal-100">/ 5</span>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
               <div
@@ -354,6 +418,22 @@ export function SessionResultsPage() {
       {reEvalMutation.isError && (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           Re-evaluation failed: {extractApiError(reEvalMutation.error)}
+        </div>
+      )}
+
+      {queuedEvaluationJob && (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+          {formatJobType(queuedEvaluationJob.jobType)} is {queuedEvaluationJob.state}.
+          The result will appear here automatically.
+        </div>
+      )}
+
+      {failedEvaluationJob && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {formatJobType(failedEvaluationJob.jobType)} failed after{' '}
+          {failedEvaluationJob.attempts || 1} attempt
+          {(failedEvaluationJob.attempts || 1) === 1 ? '' : 's'}:{' '}
+          {failedEvaluationJob.lastError ?? 'No error message was recorded.'}
         </div>
       )}
 
@@ -424,7 +504,7 @@ export function SessionResultsPage() {
           className="flex w-full items-center justify-between border-b border-gray-100 bg-gray-50/80 px-4 py-3 text-left text-sm font-semibold text-gray-950 hover:bg-gray-50"
         >
           <span className="flex items-center gap-2">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-teal-100 text-teal-700">
               {planMdExpanded ? '⌄' : '›'}
             </span>
             plan.md
@@ -618,7 +698,7 @@ function PlanEvaluationView({
               <button
                 type="button"
                 onClick={onShowLatest}
-                className="text-[11px] font-medium text-blue-600 hover:underline"
+                className="text-[11px] font-medium text-teal-700 hover:underline"
               >
                 show latest →
               </button>
@@ -806,9 +886,9 @@ function DetailsPendingSkeleton({ lines }: { lines: number }) {
   // that just has no data.
   const widths = ['w-11/12', 'w-10/12', 'w-9/12', 'w-8/12', 'w-7/12'];
   return (
-    <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm">
-      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-blue-800">
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+    <div className="rounded-lg border border-teal-100 bg-teal-50/50 p-4 text-sm">
+      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-teal-800">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-teal-500" />
         Generating evidence + feedback…
       </div>
       <div className="space-y-2">
@@ -1181,7 +1261,7 @@ function AttemptsSection({
               const isExpanded = expanded.has(a.id);
               return (
                 <Fragment key={a.id}>
-                  <tr className={isCurrent ? 'bg-blue-50' : ''}>
+                  <tr className={isCurrent ? 'bg-teal-50' : ''}>
                     <td className="px-3 py-1.5 text-gray-500 tabular-nums">
                       {i + 1}
                       {i === 0 && (
@@ -1196,7 +1276,7 @@ function AttemptsSection({
                     <td className="px-3 py-1.5 text-xs uppercase tracking-wide text-gray-600">
                       {a.status}
                       {isCurrent && (
-                        <span className="ml-2 normal-case text-[10px] text-blue-700">
+                        <span className="ml-2 normal-case text-[10px] text-teal-700">
                           (this attempt)
                         </span>
                       )}
@@ -1220,7 +1300,7 @@ function AttemptsSection({
                                 ? `/sessions/${a.id}/active`
                                 : `/sessions/${a.id}`
                             }
-                            className="text-blue-600 hover:underline text-xs"
+                            className="text-teal-700 hover:underline text-xs"
                           >
                             View →
                           </Link>
@@ -1253,7 +1333,7 @@ function AttemptsSection({
                   {isExpanded && hasHistory && (
                     <tr className="bg-slate-100">
                       <td colSpan={5} className="p-0">
-                        <div className="mx-4 my-2 rounded-md border border-slate-200 border-l-4 border-l-blue-400 bg-white shadow-sm p-3">
+                        <div className="mx-4 my-2 rounded-md border border-slate-200 border-l-4 border-l-teal-500 bg-white shadow-sm p-3">
                           <EvaluationHistoryForAttempt
                             planEvals={planEvals}
                             isCurrentAttempt={isCurrent}
@@ -1291,7 +1371,7 @@ function EvaluationHistoryForAttempt({
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-2 pb-1 border-b border-slate-200">
-        <span className="text-[11px] uppercase tracking-wider font-semibold text-blue-700">
+        <span className="text-[11px] uppercase tracking-wider font-semibold text-teal-700">
           ↳ Evaluation history
         </span>
         {attemptNumber !== undefined && (
@@ -1323,7 +1403,7 @@ function EvaluationHistoryForAttempt({
                 : i === 0
               : false;
             return (
-              <tr key={e.id} className={isShowing ? 'bg-blue-50' : ''}>
+              <tr key={e.id} className={isShowing ? 'bg-teal-50' : ''}>
                 <td className="py-1 text-gray-500 tabular-nums">
                   {i + 1}
                   {i === 0 && (
@@ -1347,7 +1427,7 @@ function EvaluationHistoryForAttempt({
                 {isCurrentAttempt && (
                   <td className="py-1 text-right">
                     {isShowing ? (
-                      <span className="text-[10px] text-blue-700">
+                      <span className="text-[10px] text-teal-700">
                         currently shown
                       </span>
                     ) : (
@@ -1356,7 +1436,7 @@ function EvaluationHistoryForAttempt({
                         onClick={() =>
                           onSelectEval(i === 0 ? null : e.id)
                         }
-                        className="text-blue-600 hover:underline text-[11px]"
+                        className="text-teal-700 hover:underline text-[11px]"
                       >
                         View →
                       </button>
@@ -1401,7 +1481,7 @@ function CancelledEmptyState({
           Or jump to the latest scored attempt of this question:{' '}
           <Link
             to={`/sessions/${scoredSibling.id}`}
-            className="text-blue-600 hover:underline"
+            className="text-teal-700 hover:underline"
           >
             view scored attempt →
           </Link>
@@ -1650,7 +1730,7 @@ function TabButton({
       onClick={onClick}
       className={`px-3 py-2 -mb-px border-b-2 ${
         active
-          ? 'border-blue-600 text-blue-700 font-medium'
+          ? 'border-teal-700 text-teal-700 font-medium'
           : 'border-transparent text-gray-600 hover:text-gray-900'
       }`}
     >
@@ -1739,7 +1819,7 @@ function RetryButton({
                   }}
                   className={`px-3 py-1 ${
                     active
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-teal-700 text-white'
                       : 'bg-white text-gray-700 hover:bg-gray-100'
                   } ${i > 0 ? 'border-l border-gray-300' : ''}`}
                 >
@@ -1783,7 +1863,7 @@ function ReEvaluateButton({
         type="button"
         onClick={() => onRun()}
         disabled={isPending}
-        className="rounded-l border border-blue-600 text-blue-700 bg-white px-3 py-1.5 text-sm font-medium hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="rounded-l border border-teal-700 text-teal-700 bg-white px-3 py-1.5 text-sm font-medium hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed"
         title="Re-run the LLM evaluator on the same plan.md using the env's default model"
       >
         {isPending ? 'Re-evaluating…' : 'Re-evaluate'}
@@ -1792,7 +1872,7 @@ function ReEvaluateButton({
         type="button"
         onClick={() => setShowPicker((v) => !v)}
         disabled={isPending}
-        className="rounded-r border border-blue-600 border-l-0 text-blue-700 bg-white px-2 py-1.5 text-sm font-medium hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="rounded-r border border-teal-700 border-l-0 text-teal-700 bg-white px-2 py-1.5 text-sm font-medium hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed"
         title="Re-evaluate with a specific Anthropic model"
         aria-label="Pick Anthropic model"
       >
@@ -1930,7 +2010,7 @@ function DeepDiveDisclosure({
     <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 bg-gray-50/80 px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-teal-100 text-teal-700">
             ✦
           </span>
           <h3 className="text-sm font-semibold text-gray-950">Mentor feedback</h3>
@@ -1955,7 +2035,7 @@ function DeepDiveDisclosure({
       </div>
 
       <div className="p-4">
-        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm leading-6 text-gray-800 whitespace-pre-wrap">
+        <div className="rounded-lg border border-teal-100 bg-teal-50/50 p-4 text-sm leading-6 text-gray-800 whitespace-pre-wrap">
           {feedbackText}
         </div>
 

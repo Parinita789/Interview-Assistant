@@ -17,8 +17,10 @@ const PREVIEW_DEBOUNCE_MS = 300;
 
 const CHAT_EXPANDED_KEY = 'app-chat-expanded';
 const CHAT_HEIGHT_KEY = 'app-chat-height';
-const CHAT_MIN_HEIGHT = 120;
-const CHAT_DEFAULT_HEIGHT = 240;
+const CHAT_MIN_HEIGHT = 180;
+const CHAT_DEFAULT_HEIGHT = 360;
+const CHAT_MAX_DEFAULT_HEIGHT = 460;
+const CHAT_COLLAPSE_THRESHOLD = 150;
 
 const AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -55,6 +57,7 @@ export function ActiveSessionPage() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('edit');
   const [previewContent, setPreviewContent] = useState('');
+  const [promptOpen, setPromptOpen] = useState(false);
   const [chatExpanded, setChatExpanded] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(CHAT_EXPANDED_KEY) === '1';
@@ -62,7 +65,9 @@ export function ActiveSessionPage() {
   const [chatHeight, setChatHeight] = useState<number>(() => {
     if (typeof window === 'undefined') return CHAT_DEFAULT_HEIGHT;
     const stored = Number(window.localStorage.getItem(CHAT_HEIGHT_KEY));
-    return Number.isFinite(stored) && stored >= CHAT_MIN_HEIGHT ? stored : CHAT_DEFAULT_HEIGHT;
+    return Number.isFinite(stored) && stored >= CHAT_MIN_HEIGHT
+      ? Math.min(stored, CHAT_MAX_DEFAULT_HEIGHT)
+      : CHAT_DEFAULT_HEIGHT;
   });
   useEffect(() => {
     window.localStorage.setItem(CHAT_EXPANDED_KEY, chatExpanded ? '1' : '0');
@@ -75,10 +80,12 @@ export function ActiveSessionPage() {
     e.preventDefault();
     const startY = e.clientY;
     const startHeight = chatHeight;
-    const maxHeight = Math.floor(window.innerHeight * 0.7);
+    let lastHeight = startHeight;
+    const maxHeight = Math.floor(window.innerHeight * 0.68);
     const onMove = (ev: MouseEvent) => {
       const delta = startY - ev.clientY;
-      const next = Math.max(CHAT_MIN_HEIGHT, Math.min(maxHeight, startHeight + delta));
+      const next = Math.max(72, Math.min(maxHeight, startHeight + delta));
+      lastHeight = next;
       setChatHeight(next);
     };
     const onUp = () => {
@@ -86,6 +93,12 @@ export function ActiveSessionPage() {
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      if (lastHeight < CHAT_COLLAPSE_THRESHOLD) {
+        setChatExpanded(false);
+        setChatHeight(CHAT_DEFAULT_HEIGHT);
+      } else if (lastHeight < CHAT_MIN_HEIGHT) {
+        setChatHeight(CHAT_MIN_HEIGHT);
+      }
     };
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
@@ -273,49 +286,65 @@ export function ActiveSessionPage() {
   };
 
   return (
-    <div className="flex flex-col gap-2 h-[calc(100vh-1.5rem)]">
-      <header className="flex items-center justify-between gap-3 shrink-0">
-        <h2 className="text-base font-semibold leading-none">Active session</h2>
-        <div className="flex items-center gap-3">
-          <span
-            className={`text-base font-semibold font-mono tabular-nums leading-none px-2 py-1.5 ${
-              isPaused ? 'text-amber-600' : 'text-gray-800'
-            }`}
-          >
-            {formatElapsed(elapsed)}
-          </span>
-          <button
-            type="button"
-            onClick={handlePauseToggle}
-            disabled={endMutation.isPending}
-            className={`rounded px-3 py-1.5 text-sm font-medium leading-none disabled:opacity-50 disabled:cursor-not-allowed ${
-              isPaused
-                ? 'bg-amber-500 text-white hover:bg-amber-600'
-                : 'bg-gray-100 text-gray-800 hover:bg-gray-200 border border-gray-300'
-            }`}
-          >
-            {isPaused ? 'Resume' : 'Pause'}
-          </button>
-          <button
-            type="button"
-            onClick={handleEnd}
-            disabled={endMutation.isPending}
-            className="rounded bg-emerald-600 text-white px-3 py-1.5 text-sm font-medium leading-none hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-          >
-            {endMutation.isPending && endMutation.variables === 'completed'
-              ? 'Evaluating…'
-              : 'End session'}
-          </button>
-          <button
-            type="button"
-            onClick={handleCancel}
-            disabled={endMutation.isPending}
-            className="rounded border border-red-300 text-red-700 px-3 py-1.5 text-sm font-medium leading-none hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {endMutation.isPending && endMutation.variables === 'abandoned'
-              ? 'Cancelling…'
-              : 'Cancel'}
-          </button>
+    <div className="mx-auto flex h-full min-h-[640px] w-full max-w-7xl flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-slate-800 dark:bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.16),_transparent_34%),linear-gradient(135deg,_#020617,_#0f172a_46%,_#111827)] dark:shadow-2xl dark:ring-1 dark:ring-slate-800/70">
+      <header className="shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gradient-to-r from-white via-slate-50 to-teal-50 shadow-sm dark:border-white/10 dark:bg-none dark:bg-white/5 dark:backdrop-blur">
+        <div className="flex flex-col gap-3 px-4 py-3 text-gray-950 dark:text-white lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_16px_rgba(52,211,153,0.55)]" />
+              <h2 className="text-base font-semibold leading-tight">Planning workspace</h2>
+              <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-800 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-100">
+                plan.md
+              </span>
+            </div>
+            <p className="mt-1 truncate text-xs text-gray-600 dark:text-teal-100">
+              {session.question.prompt}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+            <span
+              className={`inline-flex h-8 min-w-24 items-center justify-center rounded-md border px-3 font-mono text-sm font-semibold tabular-nums shadow-inner ${
+                isPaused
+                  ? 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-300/40 dark:bg-amber-300/15 dark:text-amber-100'
+                  : 'border-teal-200 bg-white text-gray-950 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-white'
+              }`}
+              title={isPaused ? 'Timer paused' : 'Elapsed time'}
+            >
+              {formatElapsed(elapsed)}
+            </span>
+            <button
+              type="button"
+              onClick={handlePauseToggle}
+              disabled={endMutation.isPending}
+              className={`inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                isPaused
+                  ? 'bg-amber-400 text-gray-950 hover:bg-amber-300'
+                  : 'border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
+              }`}
+            >
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+            <button
+              type="button"
+              onClick={handleEnd}
+              disabled={endMutation.isPending}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-emerald-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-gray-300 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+            >
+              {endMutation.isPending && endMutation.variables === 'completed'
+                ? 'Evaluating...'
+                : 'End session'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={endMutation.isPending}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-rose-300 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-200/60 dark:bg-white/10 dark:text-rose-100 dark:hover:bg-rose-500/20"
+            >
+              {endMutation.isPending && endMutation.variables === 'abandoned'
+                ? 'Cancelling...'
+                : 'Cancel'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -325,30 +354,29 @@ export function ActiveSessionPage() {
         </div>
       )}
 
-      <section className="shrink-0">
-        <h3 className="text-[11px] font-medium text-gray-700 mb-0.5 uppercase tracking-wide">
-          Question
-        </h3>
-        <div className="rounded border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-sm whitespace-pre-wrap font-mono max-h-24 overflow-y-auto">
-          {session.question.prompt}
-        </div>
-      </section>
-
-      <section className="flex-1 flex flex-col min-h-0">
-        <div className="flex items-center justify-between mb-1 shrink-0 gap-2 flex-wrap">
-          <div className="flex items-center gap-3">
-            <h3 className="text-xs font-medium text-gray-700 uppercase tracking-wide">
-              Plan (plan.md)
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-slate-700/80 dark:bg-slate-950/95 dark:shadow-2xl">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/95 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600 dark:text-slate-300">
+              Plan.md
             </h3>
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+            <button
+              type="button"
+              onClick={() => setPromptOpen((open) => !open)}
+              className="inline-flex h-7 items-center justify-center rounded-md border border-gray-300 bg-white px-2.5 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              aria-expanded={promptOpen}
+            >
+              {promptOpen ? 'Hide prompt' : 'Show prompt'}
+            </button>
           </div>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
             {saveMutation.isPending ? (
-              <span>Saving…</span>
+              <span className="font-medium text-teal-700 dark:text-teal-300">Saving...</span>
             ) : lastSavedAt ? (
               <span>
                 Last saved {formatRelative(lastSavedAt, now)}
-                {dirty && <span className="text-amber-600"> • unsaved changes</span>}
+                {dirty && <span className="font-medium text-amber-700 dark:text-amber-300"> · unsaved changes</span>}
               </span>
             ) : (
               <span>Not saved yet</span>
@@ -357,18 +385,25 @@ export function ActiveSessionPage() {
               type="button"
               onClick={saveIfDirty}
               disabled={!seededRef.current || saveMutation.isPending || !dirty}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-xs font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className="inline-flex h-8 items-center justify-center rounded-md bg-teal-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-gray-300 dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400 dark:disabled:bg-slate-700 dark:disabled:text-slate-400"
             >
               Save now
             </button>
           </div>
         </div>
-        <div className="flex-1 flex gap-2 min-h-0">
+        {promptOpen && (
+          <div className="shrink-0 border-b border-gray-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
+            <div className="max-h-20 overflow-y-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs leading-relaxed text-gray-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+              {session.question.prompt}
+            </div>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1 flex-col gap-2 bg-white p-2 dark:bg-slate-950 lg:flex-row">
           {viewMode !== 'preview' && (
             <div
               className={`${
-                viewMode === 'split' ? 'w-1/2' : 'flex-1'
-              } rounded border border-gray-300 overflow-hidden min-h-0`}
+                viewMode === 'split' ? 'lg:w-1/2' : 'flex-1'
+              } min-h-[360px] overflow-hidden rounded-lg border border-slate-700 bg-gray-950 shadow-[0_24px_70px_rgba(0,0,0,0.35)]`}
             >
               <Editor
                 height="100%"
@@ -388,8 +423,8 @@ export function ActiveSessionPage() {
           {viewMode !== 'edit' && (
             <div
               className={`${
-                viewMode === 'split' ? 'w-1/2' : 'flex-1'
-              } rounded border border-gray-300 bg-white overflow-y-auto overflow-x-auto min-h-0`}
+                viewMode === 'split' ? 'lg:w-1/2' : 'flex-1'
+              } min-h-[360px] overflow-x-auto overflow-y-auto rounded-lg border border-slate-700 bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]`}
             >
               <PreviewPane
                 content={previewContent}
@@ -424,20 +459,20 @@ export function ActiveSessionPage() {
         )}
       </section>
 
-      {chatExpanded && (
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize chat panel"
-          onMouseDown={startChatResize}
-          title="Drag to resize"
-          className="h-1.5 -my-0.5 shrink-0 bg-transparent hover:bg-blue-300 active:bg-blue-400 cursor-row-resize transition-colors"
-        />
-      )}
       <aside
-        className="shrink-0"
+        className="fixed bottom-4 right-4 z-40 w-[min(440px,calc(100vw-2rem))]"
         style={chatExpanded ? { height: `${chatHeight}px` } : undefined}
       >
+        {chatExpanded && (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize chat panel"
+            onMouseDown={startChatResize}
+            title="Drag to resize"
+            className="mx-auto mb-1 h-1.5 w-24 cursor-row-resize rounded-full bg-teal-300/70 transition-colors hover:bg-teal-400 active:bg-teal-500"
+          />
+        )}
         <HintChatPanel
           sessionId={id}
           expanded={chatExpanded}
@@ -522,7 +557,7 @@ function PreviewPane({
             href="https://mermaid.js.org/intro/"
             target="_blank"
             rel="noreferrer"
-            className="text-blue-600 hover:underline text-[11px]"
+            className="text-teal-700 hover:underline text-[11px]"
           >
             Mermaid docs ↗
           </a>
@@ -538,7 +573,7 @@ function PreviewPane({
             href={mermaidLiveUrl('flowchart LR\n  A --> B')}
             target="_blank"
             rel="noreferrer"
-            className="inline-block rounded border border-blue-300 text-blue-700 bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-blue-50"
+            className="inline-block rounded border border-teal-300 text-teal-700 bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-teal-50"
             title="Build your diagram visually in the official editor, then paste back"
           >
             Open Mermaid Live Editor ↗
@@ -567,7 +602,7 @@ function PreviewPane({
             href={mermaidLiveUrl('flowchart LR\n  A --> B')}
             target="_blank"
             rel="noreferrer"
-            className="rounded border border-blue-300 bg-white text-blue-700 px-2 py-0.5 text-[11px] font-medium hover:bg-blue-50"
+            className="rounded border border-teal-300 bg-white text-teal-700 px-2 py-0.5 text-[11px] font-medium hover:bg-teal-50"
             title="Build a new diagram in the official editor, then paste back"
           >
             Mermaid Live ↗
@@ -583,7 +618,7 @@ function PreviewPane({
               rel="noreferrer"
               title="Open this diagram in the official Mermaid Live Editor"
               aria-label={`Open diagram ${i + 1} in Mermaid Live Editor`}
-              className="inline-flex items-center justify-center h-6 px-2 rounded border border-gray-300 bg-white text-[11px] text-blue-700 hover:border-blue-300 hover:bg-blue-50"
+              className="inline-flex items-center justify-center h-6 px-2 rounded border border-gray-300 bg-white text-[11px] text-teal-700 hover:border-teal-300 hover:bg-teal-50"
             >
               Edit ↗
             </a>
@@ -601,7 +636,7 @@ function PreviewPane({
         </div>
       ))}
       {pasteOpen && (
-        <div className="rounded border border-blue-200 bg-blue-50/30 p-2">
+        <div className="rounded border border-teal-200 bg-teal-50/30 p-2">
           <div className="text-[11px] font-medium text-gray-700 mb-1.5">
             Paste a new diagram
           </div>
@@ -646,7 +681,7 @@ function InlineDiagramComposer({
         rows={6}
         placeholder={MERMAID_PLACEHOLDER}
         spellCheck={false}
-        className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-[11px] font-mono leading-snug resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-[11px] font-mono leading-snug resize-y focus:outline-none focus:ring-2 focus:ring-teal-600"
       />
       <div className="flex items-center gap-2">
         <button
@@ -656,7 +691,7 @@ function InlineDiagramComposer({
             setValue('');
           }}
           disabled={!canInsert}
-          className="rounded bg-blue-600 text-white px-2.5 py-1 text-[11px] font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          className="rounded bg-teal-700 text-white px-2.5 py-1 text-[11px] font-medium hover:bg-teal-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
           Insert into plan
         </button>
@@ -748,7 +783,7 @@ function ViewModeToggle({
     { value: 'preview', label: 'Preview', title: 'Rendered preview only' },
   ];
   return (
-    <div className="inline-flex rounded border border-gray-300 overflow-hidden text-[11px]">
+    <div className="inline-flex overflow-hidden rounded-md border border-gray-300 bg-white p-0.5 text-[11px] shadow-sm dark:border-slate-700 dark:bg-slate-950">
       {options.map((o, i) => (
         <button
           key={o.value}
@@ -756,11 +791,11 @@ function ViewModeToggle({
           onClick={() => onChange(o.value)}
           title={o.title}
           aria-pressed={mode === o.value}
-          className={`px-2.5 py-1 ${
+          className={`rounded px-3 py-1 font-semibold transition-colors ${
             mode === o.value
-              ? 'bg-blue-600 text-white'
-              : 'bg-white text-gray-700 hover:bg-gray-100'
-          } ${i > 0 ? 'border-l border-gray-300' : ''}`}
+              ? 'bg-teal-700 text-white shadow-sm dark:bg-teal-500 dark:text-slate-950'
+              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
+          } ${i > 0 ? 'ml-0.5' : ''}`}
         >
           {o.label}
         </button>
